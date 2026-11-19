@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "component": "remote-access",
+  "package_name": "enzimos-rust-remote-access",
+  "version": "0.2.0",
+  "architecture": "x86_64",
+  "profile": "rust-candidate",
+  "automatic_activation": false,
+  "installed_qualification": false,
+  "binaries": {
+    "enzimos-remote": "usr/lib/enzimos-remote/enzimos-remote-native",
+    "enzimos-remote-service": "usr/lib/enzimos-remote/remote-service",
+    "enzimos-ssh-entry": "usr/lib/enzimos-remote/ssh-entry",
+    "enzimos-desktop-entry": "usr/lib/enzimos-remote/desktop-entry",
+    "enzimos-desktop-worker": "usr/lib/enzimos-remote/desktop-worker"
+  },
+  "dependencies": [
+    "glibc",
+    "gcc-libs",
+    "openssl",
+    "pam",
+    "openssh",
+    "systemd",
+    "firewalld",
+    "polkit",
+    "dbus-broker-units",
+    "wayvnc"
+  ],
+  "resources": {}
+}

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policy target="CONTINUE" priority="-32000">
+  <short>enzimOS remote listener scopes</short>
+  <description>Empty until an explicitly approved remote listener leases address and client-network rules. Unrelated traffic continues through normal policies and zones.</description>
+  <ingress-zone name="ANY"/>
+  <egress-zone name="HOST"/>
+</policy>

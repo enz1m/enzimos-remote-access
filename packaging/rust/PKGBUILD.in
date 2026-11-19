@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# Prebuilt Rust binaries only; no install hook or service activation.
+pkgname=enzimos-rust-remote-access
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='enzimOS native runtime binaries'
+arch=('x86_64')
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'openssl' 'pam' 'openssh' 'systemd' 'firewalld' 'polkit' 'dbus-broker-units' 'wayvnc')
+source=('runtime.tar' 'LICENSE')
+sha256sums=('@RUNTIME_SHA256@' '@LICENSE_SHA256@')
+package() {
+  cp -r --preserve=mode,timestamps --no-preserve=ownership "$srcdir/runtime/." "$pkgdir/"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

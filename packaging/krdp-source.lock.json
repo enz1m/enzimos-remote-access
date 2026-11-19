@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "source": "https://github.com/KDE/krdp.git",
+  "revision": "789d822167f99bf4c6c4877079aeefb2ededdb69",
+  "patch": "krdp-server-only.patch",
+  "patch_sha256": "da4e658cbf205f8d03c209dbee894efcfcf96a9fe063770908fbf1a7ceba01b4",
+  "build_options": {
+    "BUILD_SETTINGS": false,
+    "BUILD_EXAMPLES": false,
+    "BUILD_PLASMA_SESSION": false,
+    "BUILD_TESTING": true
+  },
+  "scope": "Server-only candidate with sealed token/SAM, inherited listener, bounded peers, protected input/clipboard/portal/EIS admission and exact six-test profile; no installed qualification",
+  "owned_tests": [
+    "enzimos-eis-input",
+    "enzimos-inherited-listener",
+    "enzimos-input-admission",
+    "enzimos-memory-sam",
+    "enzimos-portal-admission",
+    "enzimos-sharing-password"
+  ],
+  "release_authorized": false,
+  "kpipewire": {
+    "source": "https://github.com/KDE/kpipewire.git",
+    "revision": "46c2d619f26e8f7bf59547a28c64913948665184",
+    "private_prefix": "/usr/lib/enzimos-rdp-provider",
+    "reason": "KRDP encoder backpressure API absent from frozen6.7.5; build and ship matched private libraries without replacing base KPipeWire"
+  },
+  "test_report_profile": 2
+}

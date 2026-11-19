@@ -1,0 +1,24 @@
+[Unit]
+Description=enzimOS approved SSH and SFTP sharing
+After=dbus.service network-online.target firewalld.service
+Wants=network-online.target
+Requires=dbus.service firewalld.service
+
+[Service]
+Type=exec
+ExecStartPre=/usr/lib/enzimos-remote/ssh-entry prepare
+ExecStart=/usr/bin/sshd -D -e -f /etc/enzimos/remote/sshd_config
+ExecStopPost=/usr/lib/enzimos-remote/ssh-entry release
+KillMode=process
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+Restart=no
+UMask=0077
+CPUWeight=80
+IOWeight=40
+TasksMax=512
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

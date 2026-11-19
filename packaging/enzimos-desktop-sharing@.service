@@ -1,0 +1,33 @@
+[Unit]
+BindsTo=firewalld.service
+After=firewalld.service
+Description=enzimOS approved encrypted desktop sharing
+Requires=dbus.service firewalld.service
+After=dbus.service firewalld.service
+
+[Service]
+Type=simple
+NotifyAccess=exec
+FileDescriptorStoreMax=1
+FileDescriptorStorePreserve=yes
+User=%i
+Slice=system.slice
+UMask=0077
+LoadCredential=desktop-config:/run/enzimos-remote/sharing/%i/grant.json
+ExecStartPre=+/usr/lib/enzimos-remote/desktop-entry prepare %i
+ExecStart=/usr/lib/enzimos-remote/desktop-worker
+ExecStopPost=+/usr/lib/enzimos-remote/desktop-entry release %i
+Restart=no
+KillMode=control-group
+TimeoutStartSec=45s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+# No mount-namespace options (ProtectSystem=, ProtectKernel*=, ProtectControlGroups=,
+# Private*=): systemd would run the `+` prepare/release entries in the unit's own
+# mount namespace, and they must act in PID 1's. The worker runs as the user with
+# NoNewPrivileges, which those options would not restrict further.
+RestrictSUIDSGID=yes
+LockPersonality=yes
+TasksMax=32
+MemoryMax=256M
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GCONV_PATH PYTHONPATH PYTHONHOME

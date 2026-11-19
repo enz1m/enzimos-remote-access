@@ -1,0 +1,2977 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0c3c9c4..f46189b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,15 +34,22 @@ include(ECMQmlModule)
+ include(ECMFindQmlModule)
+ 
+ option(BUILD_EXAMPLES "Build example applications" ON)
++option(BUILD_SETTINGS "Build the Plasma settings module and desktop integration" ON)
+ option(BUILD_PLASMA_SESSION "Build support for Plasma Screencasting extensions" ON)
+ 
+ find_package(PkgConfig REQUIRED)
+ 
+-find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED Core Concurrent Quick Gui Network DBus WaylandClient Qml)
++find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED Core Concurrent Widgets Gui Network DBus WaylandClient)
++if(BUILD_SETTINGS)
++    find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED Quick Qml)
++endif()
+ 
+ find_package(Qt6GuiPrivate ${QT_MIN_VERSION} REQUIRED NO_MODULE)
+ 
+-find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS Config DBusAddons KCMUtils I18n CoreAddons StatusNotifierItem Crash GuiAddons)
++find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS Config DBusAddons I18n CoreAddons StatusNotifierItem Crash GuiAddons)
++if(BUILD_SETTINGS)
++    find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS KCMUtils)
++endif()
+ 
+ find_package(FreeRDP 3.1 REQUIRED)
+ find_package(WinPR 3.1 REQUIRED)
+@@ -72,7 +79,9 @@ set_package_properties(PAM PROPERTIES DESCRIPTION "PAM Libraries"
+ 
+ pkg_check_modules(Libei REQUIRED IMPORTED_TARGET libei-1.0>=1.6)
+ 
+-ecm_find_qmlmodule(org.kde.kirigamiaddons.formcard REQUIRED)
++if(BUILD_SETTINGS)
++    ecm_find_qmlmodule(org.kde.kirigamiaddons.formcard REQUIRED)
++endif()
+ 
+ set(EXCLUDE_DEPRECATED_BEFORE_AND_AT 0 CACHE STRING "Control the range of deprecated API excluded from the build [default=0].")
+ 
+diff --git a/LICENSES/MIT.txt b/LICENSES/MIT.txt
+new file mode 100644
+index 0000000..7a4b6d0
+--- /dev/null
++++ b/LICENSES/MIT.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2025–2026 enzUI contributors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 2bba0e5..032f86c 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -1,7 +1,9 @@
+ # SPDX-FileCopyrightText: 2026 Nicolas Fella <nicolas.fella@gmx.de>
+ # SPDX-License-Identifier: BSD-2-Clause
+ 
+-add_test(NAME kcm_smoketest COMMAND kcmshell6 --smoke-test kcm_krdpserver)
+-set_tests_properties(kcm_smoketest PROPERTIES
+-    ENVIRONMENT_MODIFICATION QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/bin
+-)
++if(BUILD_SETTINGS)
++    add_test(NAME kcm_smoketest COMMAND kcmshell6 --smoke-test kcm_krdpserver)
++    set_tests_properties(kcm_smoketest PROPERTIES
++        ENVIRONMENT_MODIFICATION QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/bin
++    )
++endif()
+diff --git a/server/CMakeLists.txt b/server/CMakeLists.txt
+index b304502..95e59e4 100644
+--- a/server/CMakeLists.txt
++++ b/server/CMakeLists.txt
+@@ -5,22 +5,48 @@ add_definitions(-DTRANSLATION_DOMAIN=\"krdpserver\")
+ 
+ add_executable(krdpserver)
+ 
+-target_sources(krdpserver PRIVATE main.cpp SessionController.cpp)
++target_sources(krdpserver PRIVATE main.cpp SessionController.cpp SharingPassword.cpp)
++
++if(BUILD_TESTING)
++    add_executable(enzimos-sharing-password-test SharingPasswordTest.cpp SharingPassword.cpp)
++    add_test(NAME enzimos-sharing-password COMMAND enzimos-sharing-password-test)
++    add_executable(enzimos-memory-sam-test MemorySamFileTest.cpp)
++    target_include_directories(enzimos-memory-sam-test PRIVATE ${WinPR_INCLUDE_DIR})
++    target_link_libraries(enzimos-memory-sam-test PRIVATE winpr)
++    add_test(NAME enzimos-memory-sam COMMAND enzimos-memory-sam-test)
++    add_executable(enzimos-inherited-listener-test InheritedListenerTest.cpp)
++    target_link_libraries(enzimos-inherited-listener-test PRIVATE KRdp)
++    add_test(NAME enzimos-inherited-listener COMMAND enzimos-inherited-listener-test)
++    add_executable(enzimos-input-admission-test InputAdmissionTest.cpp)
++    target_link_libraries(enzimos-input-admission-test PRIVATE KRdp KF6::GuiAddons)
++    add_test(NAME enzimos-input-admission COMMAND enzimos-input-admission-test)
++    set_tests_properties(enzimos-input-admission PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
++    add_executable(enzimos-portal-admission-test PortalAdmissionTest.cpp)
++    target_link_libraries(enzimos-portal-admission-test PRIVATE KRdp eis)
++    add_test(NAME enzimos-portal-admission COMMAND dbus-run-session -- $<TARGET_FILE:enzimos-portal-admission-test>)
++    add_executable(enzimos-eis-input-test EisInputTest.cpp)
++    target_link_libraries(enzimos-eis-input-test PRIVATE KRdp eis)
++    add_test(NAME enzimos-eis-input COMMAND enzimos-eis-input-test)
++endif()
+ 
+ kconfig_target_kcfg_file(krdpserver FILE krdpserversettings.kcfg CLASS_NAME ServerConfig SINGLETON)
+ 
+ target_include_directories(krdpserver PRIVATE ${CMAKE_BINARY_DIR})
+ 
+-target_link_libraries(krdpserver PRIVATE Qt6::Gui KF6::CoreAddons KF6::ConfigGui KF6::DBusAddons KF6::Crash KRdp qt6keychain KF6::StatusNotifierItem KF6::I18n)
++target_link_libraries(krdpserver PRIVATE Qt6::Widgets Qt6::Gui KF6::CoreAddons KF6::ConfigGui KF6::DBusAddons KF6::Crash KRdp qt6keychain KF6::StatusNotifierItem KF6::I18n)
+ 
+ if (BUILD_PLASMA_SESSION)
+     target_compile_definitions(krdpserver PRIVATE -DWITH_PLASMA_SESSION)
+ endif()
+ 
+-configure_file(org.kde.krdpserver.desktop.cmake ${CMAKE_CURRENT_BINARY_DIR}/org.kde.krdpserver.desktop @ONLY)
+-configure_file(app-org.kde.krdpserver.service.in ${CMAKE_CURRENT_BINARY_DIR}/app-org.kde.krdpserver.service @ONLY)
++if(BUILD_SETTINGS)
++    configure_file(org.kde.krdpserver.desktop.cmake ${CMAKE_CURRENT_BINARY_DIR}/org.kde.krdpserver.desktop @ONLY)
++    configure_file(app-org.kde.krdpserver.service.in ${CMAKE_CURRENT_BINARY_DIR}/app-org.kde.krdpserver.service @ONLY)
++endif()
+ 
+ install(TARGETS krdpserver DESTINATION ${KDE_INSTALL_BINDIR})
+-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.kde.krdpserver.desktop DESTINATION ${KDE_INSTALL_APPDIR})
+-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/app-org.kde.krdpserver.service DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
+-install(FILES 00-krdp.preset DESTINATION ${KDE_INSTALL_SYSTEMDUNITDIR}/user-preset)
++if(BUILD_SETTINGS)
++    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.kde.krdpserver.desktop DESTINATION ${KDE_INSTALL_APPDIR})
++    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/app-org.kde.krdpserver.service DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
++    install(FILES 00-krdp.preset DESTINATION ${KDE_INSTALL_SYSTEMDUNITDIR}/user-preset)
++endif()
+diff --git a/server/EisInputTest.cpp b/server/EisInputTest.cpp
+new file mode 100644
+index 0000000..9414eef
+--- /dev/null
++++ b/server/EisInputTest.cpp
+@@ -0,0 +1,127 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "../src/EiConnection.h"
++
++#include <QCoreApplication>
++#include <QElapsedTimer>
++#include <QKeyEvent>
++#include <QMouseEvent>
++#include <QPointer>
++#include <QThread>
++#include <libeis.h>
++#include <cstdlib>
++#include <iostream>
++#include <memory>
++#include <unistd.h>
++#include <fcntl.h>
++
++namespace
++{
++void require(bool value,const char *message)
++{
++    if (!value) {std::cerr << message << '\n';std::exit(1);}
++}
++
++void dispatch(eis *server,int &keyEvents,eis_client *&accepted,eis_device *&keyboard,bool &allowResume)
++{
++    eis_dispatch(server);
++    while (auto event=eis_get_event(server)) {
++        const auto type=eis_event_get_type(event);
++        if (type==EIS_EVENT_CLIENT_CONNECT) {
++            auto client=eis_event_get_client(event);require(eis_client_is_sender(client),"non-sender client");
++            require(accepted==nullptr,"unexpected second client");accepted=eis_client_ref(client);eis_client_connect(client);
++            auto seat=eis_client_new_seat(client,"private-fixture");eis_seat_configure_capability(seat,EIS_DEVICE_CAP_KEYBOARD);eis_seat_add(seat);eis_seat_unref(seat);
++        } else if (type==EIS_EVENT_SEAT_BIND) {
++            auto seat=eis_event_get_seat(event);
++            if (eis_seat_has_capability(seat,EIS_DEVICE_CAP_KEYBOARD)) {
++                if (!keyboard) {
++                    keyboard=eis_seat_new_device(seat);eis_device_configure_name(keyboard,"private-keyboard");eis_device_configure_capability(keyboard,EIS_DEVICE_CAP_KEYBOARD);eis_device_add(keyboard);
++                }
++            }
++        } else if (type==EIS_EVENT_DEVICE_READY) {
++            if (allowResume) eis_device_resume(eis_event_get_device(event));
++        } else if (type==EIS_EVENT_DEVICE_CLOSED) {
++            if (keyboard) {eis_device_unref(keyboard);keyboard=nullptr;}
++        } else if (type==EIS_EVENT_KEYBOARD_KEY) {
++            require(eis_event_keyboard_get_key(event)==30,"different key transmitted");++keyEvents;
++        }
++        eis_event_unref(event);
++    }
++}
++
++void callbackLifetime(QCoreApplication &application,bool destroyOnConnect)
++{
++    auto server=eis_new(nullptr);require(server!=nullptr,"callback EIS context failed");
++    eis_set_flag(server,EIS_FLAG_DEVICE_READY);require(eis_setup_backend_fd(server)==0,"callback EIS backend failed");
++    int fd=eis_backend_fd_add_client(server);require(fd>=0,"callback EIS client failed");
++    int keys=0,connections=0,errors=0;bool resume=false;eis_client *accepted=nullptr;eis_device *keyboard=nullptr;
++    auto sender=std::make_unique<KRdp::EiConnection>(fd);QPointer<KRdp::EiConnection> alive(sender.get());
++    QObject::connect(sender.get(),&KRdp::EiConnection::connected,&application,[&]() {++connections;if (destroyOnConnect) sender.reset();});
++    QObject::connect(sender.get(),&KRdp::EiConnection::error,&application,[&]() {++errors;sender.reset();});
++    QElapsedTimer deadline;deadline.start();
++    while (connections==0 && deadline.elapsed()<3000) {dispatch(server,keys,accepted,keyboard,resume);application.processEvents();QThread::msleep(1);}
++    require(connections==1,"callback handshake receipt missing");
++    if (!destroyOnConnect) {
++        require(accepted!=nullptr,"callback accepted client missing");eis_client_disconnect(accepted);
++        deadline.restart();while (errors==0 && deadline.elapsed()<3000) {dispatch(server,keys,accepted,keyboard,resume);application.processEvents();QThread::msleep(1);}
++        require(errors==1,"disconnect callback did not finish once");
++    }
++    require(alive.isNull(),"signal callback did not destroy EIS sender safely");
++    if (keyboard) eis_device_unref(keyboard);
++    if (accepted) eis_client_unref(accepted);
++    eis_unref(server);
++}
++}
++
++int main(int argc,char **argv)
++{
++    QCoreApplication application(argc,argv);
++    int sentinel=open("/dev/null",O_RDONLY|O_CLOEXEC);require(sentinel>=0,"sentinel open failed");
++    {KRdp::EiConnection invalid(-1);require(!invalid.isValid(),"invalid backend descriptor accepted");}
++    require(fcntl(sentinel,F_GETFD)>=0,"invalid EIS setup closed unrelated descriptor");close(sentinel);
++    callbackLifetime(application,true);callbackLifetime(application,false);
++    auto server=eis_new(nullptr);require(server!=nullptr,"private EIS context failed");
++    eis_set_flag(server,EIS_FLAG_DEVICE_READY);
++    require(eis_setup_backend_fd(server)==0,"private EIS FD backend failed");
++    int fd=eis_backend_fd_add_client(server);require(fd>=0,"private EIS client failed");
++    int keys=0,errors=0;int connections=0;bool allowResume=false;eis_client *accepted=nullptr;eis_device *keyboard=nullptr;
++    {
++        KRdp::EiConnection sender(fd,nullptr);require(sender.isValid(),"libei sender setup failed");
++        require(!sender.isConnected(),"unacknowledged libei context reported connected");
++        QObject::connect(&sender,&KRdp::EiConnection::connected,&application,[&]() {++connections;});
++        QObject::connect(&sender,&KRdp::EiConnection::error,&application,[&]() {++errors;});
++        QElapsedTimer elapsed;elapsed.start();
++        while (elapsed.elapsed()<300) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        auto press=std::make_shared<QKeyEvent>(QEvent::KeyPress,0,Qt::NoModifier,30,0,0);
++        auto release=std::make_shared<QKeyEvent>(QEvent::KeyRelease,0,Qt::NoModifier,30,0,0);
++        sender.sendEvent(press,QSize(1920,1080),QStringLiteral("fixture"));sender.sendEvent(release,QSize(1920,1080),QStringLiteral("fixture"));
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(keys==0 && keyboard!=nullptr,"input sent before device resumed");
++        allowResume=true;eis_device_resume(keyboard);
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        sender.sendEvent(std::make_shared<QMouseEvent>(QEvent::MouseMove,QPointF(20,30),QPointF(20,30),Qt::NoButton,Qt::NoButton,Qt::NoModifier),QSize(1920,1080),QString());
++        sender.sendEvent(press,QSize(1920,1080),QStringLiteral("fixture"));sender.sendEvent(release,QSize(1920,1080),QStringLiteral("fixture"));
++        elapsed.restart();while (keys<2 && elapsed.elapsed()<3000) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(keys==2 && errors==0 && connections==1 && sender.isConnected(),"real private EIS keyboard events/connection receipt missing");
++        eis_device_pause(keyboard);
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        sender.sendEvent(press,QSize(1920,1080),QStringLiteral("fixture"));sender.sendEvent(release,QSize(1920,1080),QStringLiteral("fixture"));
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(keys==2,"input sent to paused device");
++        eis_device_remove(keyboard);
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        sender.sendEvent(press,QSize(1920,1080),QStringLiteral("fixture"));sender.sendEvent(release,QSize(1920,1080),QStringLiteral("fixture"));
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(keys==2,"input sent to removed device");
++        require(accepted!=nullptr,"accepted client not retained");eis_client_disconnect(accepted);
++        elapsed.restart();while (errors==0 && elapsed.elapsed()<3000) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(errors==1 && !sender.isConnected(),"EIS disconnect did not revoke readiness");
++        sender.sendEvent(press,QSize(1920,1080),QStringLiteral("fixture"));sender.sendEvent(release,QSize(1920,1080),QStringLiteral("fixture"));
++        elapsed.restart();while (elapsed.elapsed()<50) {dispatch(server,keys,accepted,keyboard,allowResume);application.processEvents();QThread::msleep(1);}
++        require(keys==2,"input sent after EIS disconnect");
++    }
++    if (keyboard) eis_device_unref(keyboard);
++    if (accepted) eis_client_unref(accepted);
++    eis_unref(server);
++    std::cout << "real private libei/libeis FD handshake and key press/release passed\n";
++}
+diff --git a/server/InheritedListenerTest.cpp b/server/InheritedListenerTest.cpp
+new file mode 100644
+index 0000000..4f4daa3
+--- /dev/null
++++ b/server/InheritedListenerTest.cpp
+@@ -0,0 +1,141 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "../src/InheritedListener.h"
++#include "../src/Server.h"
++
++#include <cerrno>
++#include <cstdlib>
++#include <iostream>
++#include <vector>
++#include <sys/stat.h>
++
++#include <QCoreApplication>
++#include <QTcpSocket>
++
++namespace
++{
++void require(bool value, const char *message)
++{
++    if (!value) {
++        std::cerr << message << '\n';
++        std::exit(1);
++    }
++}
++
++int listener()
++{
++    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
++    require(fd >= 3, "fixture socket creation failed");
++    sockaddr_in address{};
++    address.sin_family = AF_INET;
++    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    require(bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0, "fixture bind failed");
++    require(listen(fd, 16) == 0, "fixture listen failed");
++    return fd;
++}
++
++quint16 port(int fd)
++{
++    sockaddr_in address{};
++    socklen_t size = sizeof(address);
++    require(getsockname(fd, reinterpret_cast<sockaddr *>(&address), &size) == 0, "fixture address unavailable");
++    return ntohs(address.sin_port);
++}
++
++void busy(quint16 number)
++{
++    int rival = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
++    require(rival >= 3, "rival creation failed");
++    sockaddr_in address{};
++    address.sin_family = AF_INET;
++    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    address.sin_port = htons(number);
++    require(bind(rival, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == -1 && errno == EADDRINUSE, "reservation lost exclusivity");
++    close(rival);
++}
++}
++
++class AdmissionServer : public KRdp::Server {
++public:
++    using KRdp::Server::incomingConnection;
++};
++
++int main(int argc, char **argv)
++{
++    const char *hostNamespace = std::getenv("ENZIMOS_TEST_HOST_NETNS");
++    struct stat currentNamespace{};
++    require(hostNamespace != nullptr && stat("/proc/self/ns/net", &currentNamespace) == 0
++        && currentNamespace.st_ino != std::strtoull(hostNamespace, nullptr, 10), "private network namespace required; no host listener test");
++    QCoreApplication application(argc, argv);
++    int original = listener();
++    quint16 number = port(original);
++    require(number >= 1024, "fixture ephemeral port outside contract");
++    const QHostAddress address(QHostAddress::LocalHost);
++    require(EnzimOS::listenerMatches(original, address, number), "reserved listener rejected");
++    require(!EnzimOS::listenerMatches(original, address, number == 65535 ? 65534 : number + 1), "wrong port accepted");
++    require(!EnzimOS::listenerMatches(original, QHostAddress(QStringLiteral("127.0.0.2")), number), "wrong address accepted");
++    require(!EnzimOS::listenerMatches(original, QHostAddress::AnyIPv4, number), "wildcard accepted");
++    require(!EnzimOS::listenerMatches(1, address, number), "stdout accepted");
++    int pipeFds[2];
++    require(pipe2(pipeFds, O_CLOEXEC) == 0, "pipe fixture failed");
++    require(!EnzimOS::listenerMatches(pipeFds[0], address, number), "pipe accepted");
++    close(pipeFds[0]);close(pipeFds[1]);
++    int datagram = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
++    require(datagram >= 3 && !EnzimOS::listenerMatches(datagram, address, number), "datagram accepted");
++    close(datagram);
++    int unbound = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
++    require(unbound >= 3 && !EnzimOS::listenerMatches(unbound, address, number), "nonlistener accepted");
++    close(unbound);
++    int reuse = 1;
++    require(setsockopt(original, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) == 0, "reuse fixture failed");
++    require(!EnzimOS::listenerMatches(original, address, number), "reusable listener accepted");
++    reuse = 0;
++    require(setsockopt(original, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) == 0, "exclusive reset failed");
++    {
++        QTcpServer server;
++        require(EnzimOS::adoptListener(server, original, address, number), "Qt listener adoption failed");
++        struct stat before{},after{};
++        require(fstat(original, &before) == 0 && fstat(server.socketDescriptor(), &after) == 0
++            && before.st_dev == after.st_dev && before.st_ino == after.st_ino, "Qt rebound instead of adopting");
++        require((fcntl(server.socketDescriptor(), F_GETFD) & FD_CLOEXEC) != 0, "Qt descriptor can escape exec");
++        require(!EnzimOS::adoptListener(server, original, address, number), "live listener replaced");
++        busy(number);
++        server.close();
++        require(fcntl(original, F_GETFD) >= 0, "Qt closed the borrowed reservation");
++        busy(number);
++    }
++    {
++        KRdp::Server server;
++        server.setAddress(address);server.setPort(number);
++        require(server.setReservedListener(original), "server reservation rejected");
++        require(!server.setReservedListener(original), "server reservation replaced");
++    }
++    busy(number);
++    {
++        AdmissionServer server;
++        server.setProtectedSharing(true);
++        require(!server.start(), "protected server rebound without reservation");
++        std::vector<int> clients, peers;
++        int admitted = 0;
++        QObject::connect(&server, &KRdp::Server::newConnectionCreated, &server, [&](auto *) { ++admitted; });
++        for (int i=0;i<5;++i) {
++            const int client = socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,IPPROTO_TCP);
++            require(client>=3,"peer client fixture failed");
++            sockaddr_in target{}; target.sin_family=AF_INET;target.sin_addr.s_addr=htonl(INADDR_LOOPBACK);target.sin_port=htons(number);
++            require(connect(client,reinterpret_cast<sockaddr *>(&target),sizeof(target))==0,"private peer connection failed");
++            const int peer=accept4(original,nullptr,nullptr,SOCK_CLOEXEC);
++            require(peer>=3,"private peer accept failed");
++            clients.push_back(client);peers.push_back(peer);
++            server.incomingConnection(peer);
++        }
++        require(admitted==4,"protected pending peer capacity not enforced");
++        require(fcntl(peers.back(),F_GETFD)==-1 && errno==EBADF,"excess peer socket leaked");
++        server.stop();
++        for (int i=0;i<4;++i) require(fcntl(peers[i],F_GETFD)==-1 && errno==EBADF,"pre-initialize peer socket leaked during stop");
++        for(int client:clients) close(client);
++        require(!server.start(),"protected failed start was retried after stop");
++        busy(number);
++    }
++    close(original);
++    std::cout << "private-network exact socket admission, Qt same-inode adoption and retained sender ownership passed\n";
++}
+diff --git a/server/InputAdmissionTest.cpp b/server/InputAdmissionTest.cpp
+new file mode 100644
+index 0000000..d20d450
+--- /dev/null
++++ b/server/InputAdmissionTest.cpp
+@@ -0,0 +1,97 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "../src/InputHandler.h"
++#include "../src/PeerContext_p.h"
++#include "../src/AbstractSession.h"
++
++#include <cstdlib>
++#include <iostream>
++#include <vector>
++
++#include <QCoreApplication>
++#include <QEvent>
++#include <QThread>
++#include <QClipboard>
++#include <QGuiApplication>
++#include <QMimeData>
++#include <KSystemClipboard>
++
++namespace
++{
++void require(bool value, const char *message)
++{
++    if (!value) {
++        std::cerr << message << '\n';
++        std::exit(1);
++    }
++}
++
++class ClipboardProbe : public KRdp::AbstractSession
++{
++public:
++    ClipboardProbe(bool enabled) : AbstractSession(enabled) {}
++    void start() override {}
++    void sendEvent(const std::shared_ptr<QEvent> &) override {}
++};
++
++void clipboardAdmission()
++{
++    ClipboardProbe enabled(true),disabled(false);int observed=0,suppressed=0;
++    QObject::connect(&enabled,&KRdp::AbstractSession::clipboardDataChanged,&enabled,[&](const QMimeData *data) {++observed;delete data;});
++    QObject::connect(&disabled,&KRdp::AbstractSession::clipboardDataChanged,&disabled,[&](const QMimeData *data) {++suppressed;delete data;});
++    auto baseline=new QMimeData;baseline->setText(QStringLiteral("baseline"));KSystemClipboard::instance()->setMimeData(baseline,QClipboard::Clipboard);
++    const auto before=QGuiApplication::clipboard()->text();
++    auto rejected=std::make_unique<QMimeData>();rejected->setText(QStringLiteral("forbidden"));disabled.setClipboardData(std::move(rejected));
++    require(QGuiApplication::clipboard()->text()==before,"disabled clipboard accepted remote write");
++    QMetaObject::invokeMethod(KSystemClipboard::instance(),"changed",Qt::DirectConnection,Q_ARG(QClipboard::Mode,QClipboard::Clipboard));
++    require(observed>0 && suppressed==0,"clipboard positive observation missing or disabled observer received update");
++    auto permitted=std::make_unique<QMimeData>();permitted->setText(QStringLiteral("positive"));enabled.setClipboardData(std::move(permitted));
++    require(QGuiApplication::clipboard()->text()==QStringLiteral("positive"),"enabled clipboard positive write failed");
++}
++
++void stimulus(rdpInput &input)
++{
++    require(input.MouseEvent(&input, PTR_FLAGS_MOVE, 20, 30), "mouse callback failed");
++    require(input.ExtendedMouseEvent(&input, PTR_XFLAGS_BUTTON1 | PTR_XFLAGS_DOWN, 20, 30), "extended callback failed");
++    require(input.KeyboardEvent(&input, KBD_FLAGS_DOWN, 30), "key callback failed");
++    require(input.UnicodeKeyboardEvent(&input, KBD_FLAGS_DOWN, 'A'), "unicode callback failed");
++    require(input.SynchronizeEvent(&input, 0), "synchronize callback failed");
++}
++}
++
++int main(int argc, char **argv)
++{
++    QGuiApplication application(argc, argv);
++    clipboardAdmission();
++    KRdp::InputHandler handler(nullptr);
++    KRdp::PeerContext context{};
++    context.inputHandler = &handler;
++    rdpInput input{};
++    input.context = &context._p;
++    std::vector<QEvent::Type> events;
++    QObject receiver;
++    QObject::connect(&handler, &KRdp::InputHandler::inputEvent, &receiver, [&events](std::shared_ptr<QInputEvent> event) {
++        events.push_back(event->type());
++    }, Qt::DirectConnection);
++    QThread worker;
++    handler.moveToThread(&worker);worker.start();
++    QMetaObject::invokeMethod(&handler, [&]() { handler.initialize(&input); }, Qt::BlockingQueuedConnection);
++    stimulus(input);
++    require(events.empty(), "unapproved default input emitted events");
++    QMetaObject::invokeMethod(&handler, [&]() { handler.setEnabled(true); }, Qt::BlockingQueuedConnection);
++    stimulus(input);
++    require(events.size() == 5 && events[0] == QEvent::MouseMove && events[1] == QEvent::MouseButtonPress
++        && events[2] == QEvent::KeyPress && events[3] == QEvent::KeyPress && events[4] == QEvent::KeyRelease, "enabled input control did not emit all event kinds");
++    require(input.KeyboardEvent(&input, KBD_FLAGS_DOWN, 30), "held-key setup failed");
++    const size_t beforeDisable = events.size();
++    QMetaObject::invokeMethod(&handler, [&]() { handler.setEnabled(false); }, Qt::BlockingQueuedConnection);
++    require(events.size() == beforeDisable + 1 && events.back() == QEvent::KeyRelease, "disabling input left a held key");
++    const size_t blocked = events.size();
++    stimulus(input);
++    require(events.size() == blocked, "view-only input emitted events");
++    QMetaObject::invokeMethod(&handler, [&]() { handler.setEnabled(true); }, Qt::BlockingQueuedConnection);
++    require(input.SynchronizeEvent(&input, 0) && events.size() == blocked, "blocked input mutated held-key state");
++    QMetaObject::invokeMethod(&handler, [&]() { handler.moveToThread(application.thread()); }, Qt::BlockingQueuedConnection);
++    worker.quit();require(worker.wait(5000), "input worker did not terminate");
++    std::cout << "real FreeRDP callbacks: default/view-only suppression, all positive event kinds and held-key release passed\n";
++}
+diff --git a/server/MemorySamFileTest.cpp b/server/MemorySamFileTest.cpp
+new file mode 100644
+index 0000000..2c1a55f
+--- /dev/null
++++ b/server/MemorySamFileTest.cpp
+@@ -0,0 +1,60 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "../src/MemorySamFile.h"
++
++#include <array>
++#include <cstdlib>
++#include <iostream>
++#include <winpr/sam.h>
++
++namespace
++{
++void require(bool value, const char *message)
++{
++    if (!value) {
++        std::cerr << message << '\n';
++        std::exit(1);
++    }
++}
++}
++
++int main()
++{
++    constexpr auto payload = "enzimos:::000102030405060708090a0b0c0d0e0f:::\n";
++    std::string name;
++    {
++        EnzimOS::MemorySamFile file;
++        require(!file.store("") && file.path().empty(), "empty SAM accepted");
++        require(file.store(payload), "anonymous SAM creation failed");
++        name = file.path();
++        require(name.starts_with("/proc/self/fd/"), "SAM has a named filesystem path");
++        require(!file.store(payload), "live SAM replaced");
++        int reader = open(name.c_str(), O_RDONLY | O_CLOEXEC);
++        require(reader >= 0, "proc-fd SAM cannot be opened");
++        struct stat info{};
++        require(fstat(reader, &info) == 0 && info.st_nlink == 0 && (info.st_mode & 0777) == 0600, "SAM metadata invalid");
++        constexpr int seals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE;
++        const int actualSeals = fcntl(reader, F_GET_SEALS);
++        require(actualSeals >= 0 && (actualSeals & seals) == seals, "SAM seals missing");
++        close(reader);
++        int writer = open(name.c_str(), O_RDWR | O_CLOEXEC);
++        require(writer >= 0, "sealed SAM writer probe failed to open");
++        require(pwrite(writer, "X", 1, 0) == -1 && errno == EPERM, "SAM changed after sealing");
++        close(writer);
++        for (int attempt = 0; attempt < 2; ++attempt) {
++            WINPR_SAM *sam = SamOpen(name.c_str(), TRUE);
++            require(sam != nullptr, "WinPR rejected anonymous SAM path");
++            WINPR_SAM_ENTRY *entry = SamLookupUserA(sam, "enzimos", 7, "", 0);
++            require(entry != nullptr, "WinPR did not find configured sharing identity");
++            for (size_t i = 0; i < 16; ++i) {
++                require(entry->NtHash[i] == i, "WinPR read a different credential hash");
++            }
++            SamFreeEntry(sam, entry);
++            entry = SamLookupUserA(sam, "other", 5, "", 0);
++            require(entry == nullptr, "WinPR accepted another identity");
++            SamClose(sam);
++        }
++    }
++    require(open(name.c_str(), O_RDONLY | O_CLOEXEC) == -1 && errno == ENOENT, "SAM survived its owner");
++    std::cout << "anonymous sealed SAM, real WinPR lookup and teardown passed\n";
++}
+diff --git a/server/PortalAdmissionTest.cpp b/server/PortalAdmissionTest.cpp
+new file mode 100644
+index 0000000..a1d5913
+--- /dev/null
++++ b/server/PortalAdmissionTest.cpp
+@@ -0,0 +1,432 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include <QCoreApplication>
++#include <QDBusConnection>
++#include <QDBusConnectionInterface>
++#include <QDBusContext>
++#include <QDBusMessage>
++#include <QDBusObjectPath>
++#include <QDBusArgument>
++#include <QDBusMetaType>
++#include <QDBusVirtualObject>
++#include <QEventLoop>
++#include <QTimer>
++#include <QThread>
++#include <QElapsedTimer>
++
++#include "../src/PortalSession.h"
++#include <QDBusUnixFileDescriptor>
++#include <fcntl.h>
++#include <sys/socket.h>
++#include <unistd.h>
++#include <libeis.h>
++#include <atomic>
++#include <QKeyEvent>
++
++#include <cstdlib>
++#include <iostream>
++
++struct FakeStream {
++    uint nodeId;
++    QVariantMap properties;
++};
++Q_DECLARE_METATYPE(FakeStream)
++
++QDBusArgument &operator<<(QDBusArgument &argument,const FakeStream &stream)
++{
++    argument.beginStructure();argument << stream.nodeId << stream.properties;argument.endStructure();return argument;
++}
++const QDBusArgument &operator>>(const QDBusArgument &argument,FakeStream &stream)
++{
++    argument.beginStructure();argument >> stream.nodeId >> stream.properties;argument.endStructure();return argument;
++}
++
++namespace
++{
++void require(bool value, const char *message)
++{
++    if (!value) {
++        std::cerr << message << '\n';
++        std::exit(1);
++    }
++}
++
++class FakePortal : public QDBusVirtualObject
++{
++public:
++    uint devices = 0;
++    bool clipboard = false;
++    bool omitDevices = false;
++    bool wrongDevicesType = false;
++    bool wrongClipboardType = false;
++    std::atomic<int> selections{0};
++    std::atomic<int> starts{0};
++    std::atomic<int> eis{0};
++    std::atomic<int> pipewire{0};
++    QVariantMap selected;
++    bool offerStream = false;
++    bool failEis = false;
++    int pipewireDelay = 0;
++    int pipewirePeer = -1;
++    struct eis *eisServer = nullptr;
++    struct eis_client *eisClient = nullptr;
++    struct eis_device *keyboard = nullptr;
++    std::atomic<int> keys{0};
++    bool handshake = false;
++    bool forgeResponse = false;
++    bool ownerLoss = false;
++    QString ownerName;
++    bool silentResponse = false;
++    bool immediateResponse = true;
++    bool wrongReturnedHandle = false;
++    bool wrongSessionHandle = false;
++    QString sessionPath;
++    bool closeAfterStart = false;
++    bool silentTransport = false;
++    std::atomic<int> sessionCloses{0};
++    bool duplicateResponse = false;
++    int responseDelay = 30;
++    std::atomic<int> requestCloses{0};
++    std::atomic<int> createCalls{0};
++    std::atomic<int> responsesSent{0};
++    std::atomic<int> forgedSent{0};
++    void dispatchEis()
++    {
++        if (!eisServer) return;
++        eis_dispatch(eisServer);
++        while (auto event=eis_get_event(eisServer)) {
++            switch (eis_event_get_type(event)) {
++            case EIS_EVENT_CLIENT_CONNECT: {
++                auto client=eis_event_get_client(event);require(eis_client_is_sender(client),"portal EIS peer not sender");
++                eisClient=eis_client_ref(client);eis_client_connect(client);
++                auto seat=eis_client_new_seat(client,"portal-private");eis_seat_configure_capability(seat,EIS_DEVICE_CAP_KEYBOARD);eis_seat_add(seat);eis_seat_unref(seat);break;
++            }
++            case EIS_EVENT_SEAT_BIND: {
++                auto seat=eis_event_get_seat(event);
++                if (!keyboard && eis_seat_has_capability(seat,EIS_DEVICE_CAP_KEYBOARD)) {
++                    keyboard=eis_seat_new_device(seat);eis_device_configure_capability(keyboard,EIS_DEVICE_CAP_KEYBOARD);eis_device_add(keyboard);
++                }
++                break;
++            }
++            case EIS_EVENT_DEVICE_READY:eis_device_resume(eis_event_get_device(event));break;
++            case EIS_EVENT_DEVICE_CLOSED:if (keyboard) {eis_device_unref(keyboard);keyboard=nullptr;}break;
++            case EIS_EVENT_KEYBOARD_KEY:require(eis_event_keyboard_get_key(event)==30,"portal emitted wrong key");++keys;break;
++            default:break;
++            }
++            eis_event_unref(event);
++        }
++    }
++    QString introspect(const QString &) const override
++    {
++        return QStringLiteral("<interface name=\"org.freedesktop.portal.RemoteDesktop\"><method name=\"CreateSession\"><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method><method name=\"SelectDevices\"><arg type=\"o\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method><method name=\"Start\"><arg type=\"o\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method><method name=\"ConnectToEIS\"><arg type=\"o\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"h\" direction=\"out\"/></method></interface><interface name=\"org.freedesktop.portal.ScreenCast\"><method name=\"SelectSources\"><arg type=\"o\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"o\" direction=\"out\"/></method><method name=\"OpenPipeWireRemote\"><arg type=\"o\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"in\"/><arg type=\"h\" direction=\"out\"/></method></interface>");
++    }
++    bool handleMessage(const QDBusMessage &message, const QDBusConnection &connection) override
++    {
++        const QString member = message.member();
++        std::cerr << "FIXTURE_METHOD " << member.toStdString() << '\n';
++        if (member == QStringLiteral("ConnectToEIS") || member == QStringLiteral("OpenPipeWireRemote")) {
++            if (member == QStringLiteral("ConnectToEIS")) ++eis;else ++pipewire;
++            if (silentTransport) return true;
++            if (member == QStringLiteral("OpenPipeWireRemote")) {
++                int pair[2];require(socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,pair)==0,"fake PipeWire pair failed");
++                if (pipewirePeer>=0) close(pipewirePeer);
++                pipewirePeer=pair[1];
++                const QDBusUnixFileDescriptor descriptor(pair[0]);
++                std::cerr << "FIXTURE_FD source=" << pair[0] << " owned=" << descriptor.fileDescriptor() << " valid=" << descriptor.isValid() << '\n';
++                close(pair[0]);
++                QTimer::singleShot(pipewireDelay,this,[connection,message,descriptor]() {auto reply=message.createReply(QVariant::fromValue(descriptor));std::cerr << "FIXTURE_FD_REPLY " << reply.signature().toStdString() << " sent=" << connection.send(reply) << '\n';});
++            } else if (handshake) {
++                int fd=eis_backend_fd_add_client(eisServer);require(fd>=0,"portal EIS fd creation failed");
++                QDBusUnixFileDescriptor descriptor(fd);close(fd);
++                connection.send(message.createReply(QVariant::fromValue(descriptor)));
++            } else if (failEis) {
++                connection.send(message.createErrorReply(QStringLiteral("org.freedesktop.portal.Error.Failed"), QStringLiteral("deliberate EIS setup rejection")));
++            }
++            return true;
++        }
++        if (member == QStringLiteral("Close")) {
++            if (message.path().startsWith(QStringLiteral("/org/freedesktop/portal/desktop/request/"))) ++requestCloses;
++            else ++sessionCloses;
++            connection.send(message.createReply());return true;
++        }
++        QVariantMap result;
++        if (member == QStringLiteral("CreateSession")) {
++            ++createCalls;
++            const auto options=qdbus_cast<QVariantMap>(message.arguments().at(0));
++            auto sender=message.service();sender.remove(0,1);sender.replace(QLatin1Char('.'),QLatin1Char('_'));
++            sessionPath=QStringLiteral("/org/freedesktop/portal/desktop/session/%1/%2").arg(sender,options.value(QStringLiteral("session_handle_token")).toString());
++            result.insert(QStringLiteral("session_handle"),wrongSessionHandle ? sessionPath+QStringLiteral("_wrong") : sessionPath);
++        } else if (member == QStringLiteral("SelectDevices")) {
++            ++selections;selected=qdbus_cast<QVariantMap>(message.arguments().at(1));
++        } else if (member == QStringLiteral("Start")) {
++            ++starts;
++            if (!omitDevices) result.insert(QStringLiteral("devices"), wrongDevicesType ? QVariant(QString::number(devices)) : QVariant(devices));
++            result.insert(QStringLiteral("clipboard_enabled"), wrongClipboardType ? QVariant(0u) : QVariant(clipboard));
++            if (offerStream) result.insert(QStringLiteral("streams"),QVariant::fromValue(QList<FakeStream>{{22,{{QStringLiteral("mapping_id"),QStringLiteral("fixture-output")}}}}));
++        } else if (member != QStringLiteral("SelectSources")) {return false;}
++        ++serial;
++        const int optionsIndex = member==QStringLiteral("CreateSession") ? 0 : member==QStringLiteral("Start") ? 2 : 1;
++        const auto options=qdbus_cast<QVariantMap>(message.arguments().at(optionsIndex));
++        auto sender=message.service();sender.remove(0,1);sender.replace(QLatin1Char('.'),QLatin1Char('_'));
++        const QString path = QStringLiteral("/org/freedesktop/portal/desktop/request/%1/%2").arg(sender,options.value(QStringLiteral("handle_token")).toString());
++        require(!options.value(QStringLiteral("handle_token")).toString().isEmpty(),"caller omitted predictable request token");
++        connection.send(message.createReply(QVariant::fromValue(QDBusObjectPath(wrongReturnedHandle ? path+QStringLiteral("_wrong") : path))));
++        if (forgeResponse) {
++            auto foreign=QDBusConnection::connectToBus(QString::fromLocal8Bit(qgetenv("DBUS_SESSION_BUS_ADDRESS")),QStringLiteral("foreign-response"));
++            auto response=QDBusMessage::createSignal(path,QStringLiteral("org.freedesktop.portal.Request"),QStringLiteral("Response"));response << uint(0) << result;
++            require(foreign.send(response),"foreign response send failed");++forgedSent;
++            QDBusConnection::disconnectFromBus(QStringLiteral("foreign-response"));
++            return true;
++        }
++        if (ownerLoss) {
++            return true;
++        }
++        if (!silentResponse) {
++            auto emitResponse=[this,connection,path,result]() {
++                auto response=QDBusMessage::createSignal(path,QStringLiteral("org.freedesktop.portal.Request"),QStringLiteral("Response"));
++                response << uint(0) << result;connection.send(response);++responsesSent;
++                if (duplicateResponse) {connection.send(response);++responsesSent;}
++            };
++            if (immediateResponse) emitResponse();else QTimer::singleShot(responseDelay,this,emitResponse);
++        }
++        if (closeAfterStart && member==QStringLiteral("Start")) QTimer::singleShot(30,this,[connection,path=sessionPath]() {
++            auto closed=QDBusMessage::createSignal(path,QStringLiteral("org.freedesktop.portal.Session"),QStringLiteral("Closed"));
++            connection.send(closed);
++        });
++        return true;
++    }
++private:
++    int serial = 0;
++};
++
++void absentPortalOwner(FakePortal &portal,QDBusConnection &providerConnection)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {require(providerConnection.unregisterService(QStringLiteral("org.freedesktop.portal.Desktop")),"missing-owner fixture setup failed");portal.createCalls=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);int errors=0,started=0;
++        QObject::connect(&session,&KRdp::AbstractSession::error,&session,[&]() {++errors;});
++        QObject::connect(&session,&KRdp::AbstractSession::started,&session,[&]() {++started;});
++        session.start();session.start();
++        require(errors==1 && started==0 && portal.createCalls==0,"missing portal owner did not refuse without a request");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {require(providerConnection.registerService(QStringLiteral("org.freedesktop.portal.Desktop")),"missing-owner fixture restore failed");},Qt::BlockingQueuedConnection);
++}
++
++void runCase(FakePortal &portal,bool viewOnly,uint granted,bool clipboard)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {
++        portal.offerStream=false;portal.failEis=false;portal.devices=granted;portal.clipboard=clipboard;portal.selections=0;portal.starts=0;portal.eis=0;portal.pipewire=0;
++    },Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(viewOnly);
++    int errors=0,started=0;QEventLoop loop;
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;QTimer::singleShot(50,&loop,&QEventLoop::quit);});
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QTimer timeout;timeout.setSingleShot(true);QObject::connect(&timeout,&QTimer::timeout,&loop,&QEventLoop::quit);timeout.start(3000);
++    session.start();loop.exec();
++    std::cerr << "FIXTURE_COUNTS errors=" << errors << " started=" << started << " selections=" << portal.selections << " starts=" << portal.starts << " eis=" << portal.eis << " pipewire=" << portal.pipewire << '\n';
++    require(errors==1 && started==0 && portal.selections==1 && portal.starts==1,"portal negative boundary did not fail exactly once");
++    QMetaObject::invokeMethod(&portal,[&]() {
++        require(portal.selected.value(QStringLiteral("types")).toUInt()==(viewOnly?0u:3u),"protected grant requested incorrect devices");
++        require(portal.selected.value(QStringLiteral("persist_mode")).toUInt()==0 && !portal.selected.contains(QStringLiteral("restore_token")),"protected grant restored/persisted authority");
++    },Qt::BlockingQueuedConnection);
++    require(portal.eis==0 && portal.pipewire==0,"denied devices reached transport setup");
++}
++
++void positiveView(FakePortal &portal)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.devices=0;portal.clipboard=false;portal.offerStream=true;portal.eis=0;portal.pipewire=0;},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int started=0,errors=0;
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++    QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++    std::cerr << "FIXTURE_VIEW_COUNTS started=" << started << " errors=" << errors << " eis=" << portal.eis << " pw=" << portal.pipewire << '\n';
++    require(started==1 && errors==0 && portal.eis==0 && portal.pipewire==1,"view-only synthetic PipeWire FD did not start without EIS");
++}
++
++void rejectedEisLatePipewire(FakePortal &portal)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.devices=3;portal.clipboard=false;portal.offerStream=true;portal.failEis=true;portal.pipewireDelay=100;portal.eis=0;portal.pipewire=0;},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(false);QEventLoop loop;int started=0,errors=0;
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;});
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;QTimer::singleShot(250,&loop,&QEventLoop::quit);});
++    QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++    require(started==0 && errors==1 && portal.eis==1 && portal.pipewire==1,"late PipeWire callback revived rejected EIS session");
++    QMetaObject::invokeMethod(&portal,[&]() {portal.pipewireDelay=0;},Qt::BlockingQueuedConnection);
++}
++
++void positivePortalEis(FakePortal &portal)
++{
++    QTimer dispatchTimer;
++    QMetaObject::invokeMethod(&portal,[&]() {
++        portal.devices=3;portal.clipboard=false;portal.offerStream=true;portal.failEis=false;portal.handshake=true;portal.keys=0;
++        portal.eisServer=eis_new(nullptr);require(portal.eisServer!=nullptr,"portal EIS context failed");eis_set_flag(portal.eisServer,EIS_FLAG_DEVICE_READY);require(eis_setup_backend_fd(portal.eisServer)==0,"portal EIS backend failed");
++    },Qt::BlockingQueuedConnection);
++    dispatchTimer.moveToThread(portal.thread());
++    QObject::connect(&dispatchTimer,&QTimer::timeout,&portal,[&]() {portal.dispatchEis();});
++    QMetaObject::invokeMethod(&portal,[&]() {dispatchTimer.start(1);},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(false);QEventLoop loop;int started=0,errors=0;
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++    QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++    require(started==1 && errors==0,"portal did not start after real EIS handshake");
++    QEventLoop devices;QTimer::singleShot(300,&devices,&QEventLoop::quit);devices.exec();
++    session.sendEvent(std::make_shared<QKeyEvent>(QEvent::KeyPress,0,Qt::NoModifier,30,0,0));
++    session.sendEvent(std::make_shared<QKeyEvent>(QEvent::KeyRelease,0,Qt::NoModifier,30,0,0));
++    QTimer wait;wait.setSingleShot(true);QObject::connect(&wait,&QTimer::timeout,&loop,&QEventLoop::quit);wait.start(500);loop.exec();
++    require(portal.keys==2,"portal key events did not reach real EIS backend");
++    QMetaObject::invokeMethod(&portal,[&]() {require(portal.eisClient!=nullptr,"portal client missing");eis_client_disconnect(portal.eisClient);},Qt::BlockingQueuedConnection);
++    wait.start(3000);loop.exec();require(errors==1 && started==1,"portal EIS disconnect did not revoke once");
++    session.sendEvent(std::make_shared<QKeyEvent>(QEvent::KeyPress,0,Qt::NoModifier,30,0,0));
++    wait.start(50);loop.exec();require(portal.keys==2,"portal sent key after disconnect");
++    QMetaObject::invokeMethod(&portal,[&]() {dispatchTimer.stop();if (portal.keyboard) {eis_device_unref(portal.keyboard);portal.keyboard=nullptr;}if (portal.eisClient) {eis_client_unref(portal.eisClient);portal.eisClient=nullptr;}eis_unref(portal.eisServer);portal.eisServer=nullptr;dispatchTimer.moveToThread(QCoreApplication::instance()->thread());},Qt::BlockingQueuedConnection);
++}
++
++void requestLifetime(FakePortal &portal)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.ownerLoss=false;portal.forgeResponse=false;portal.wrongReturnedHandle=true;portal.duplicateResponse=false;portal.immediateResponse=true;portal.createCalls=0;portal.selections=0;portal.requestCloses=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0;
++        QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;QTimer::singleShot(100,&loop,&QEventLoop::quit);});
++        QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++        require(errors==1 && portal.createCalls==1 && portal.selections==0 && portal.requestCloses==1,"mismatched returned handle accepted or owned request not closed once");
++    }
++    {
++        auto session=new KRdp::PortalSession;session->setProtectedSharing(true);QPointer<KRdp::PortalSession> alive(session);
++        QEventLoop loop;int errors=0;
++        QObject::connect(session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;delete session;loop.quit();});
++        QTimer::singleShot(3000,&loop,&QEventLoop::quit);session->start();loop.exec();
++        require(errors==1 && alive.isNull(),"completion callback destroyed its context but request did not return safely");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {portal.wrongReturnedHandle=false;portal.wrongSessionHandle=true;portal.createCalls=0;portal.selections=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0;
++        QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++        QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();session.start();loop.exec();
++        require(errors==1 && portal.createCalls==1 && portal.selections==0,"mismatched session handle or repeated start created authority");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {portal.wrongSessionHandle=false;portal.duplicateResponse=true;portal.devices=0;portal.clipboard=false;portal.offerStream=true;portal.eis=0;portal.pipewire=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int started=0,errors=0;
++        QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;QTimer::singleShot(100,&loop,&QEventLoop::quit);});
++        QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++        QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++        require(started==1 && errors==0 && portal.pipewire==1 && portal.eis==0,"duplicate response completed a request twice");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {portal.duplicateResponse=false;portal.immediateResponse=false;portal.responseDelay=200;portal.requestCloses=0;portal.createCalls=0;portal.selections=0;},Qt::BlockingQueuedConnection);
++    int errors=0,started=0;
++    auto session=std::make_unique<KRdp::PortalSession>();session->setProtectedSharing(true);QEventLoop loop;
++    QObject::connect(session.get(),&KRdp::AbstractSession::error,&loop,[&]() {++errors;});
++    QObject::connect(session.get(),&KRdp::AbstractSession::started,&loop,[&]() {++started;});
++    session->start();QTimer::singleShot(50,&loop,[&]() {session.reset();});QTimer::singleShot(350,&loop,&QEventLoop::quit);loop.exec();
++    require(portal.createCalls==1 && portal.requestCloses==1 && portal.selections==0 && errors==0 && started==0,"destroyed caller retained request or received a late callback");
++    QMetaObject::invokeMethod(&portal,[&]() {portal.immediateResponse=true;portal.responseDelay=30;},Qt::BlockingQueuedConnection);
++}
++
++void transportLifetime(FakePortal &portal)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.devices=0;portal.offerStream=true;portal.handshake=false;portal.silentTransport=false;portal.closeAfterStart=true;portal.pipewireDelay=100;portal.pipewire=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0,started=0;
++        QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;QTimer::singleShot(200,&loop,&QEventLoop::quit);});
++        QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;});
++        QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++        require(errors==1 && started==0 && portal.pipewire==1 && session.takePipeWireFd()==-1,"Closed before PipeWire reply did not revoke or late transport revived session");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {portal.closeAfterStart=false;portal.pipewireDelay=0;portal.silentTransport=true;portal.sessionCloses=0;portal.pipewire=0;},Qt::BlockingQueuedConnection);
++    {
++        KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0,started=0;
++        QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;QTimer::singleShot(100,&loop,&QEventLoop::quit);});
++        QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;});
++        QElapsedTimer elapsed;elapsed.start();QTimer::singleShot(16500,&loop,&QEventLoop::quit);session.start();loop.exec();
++        require(errors==1 && started==0 && elapsed.elapsed()>=14000 && elapsed.elapsed()<16500 && portal.pipewire==1 && portal.sessionCloses==1,"retained silent transport session did not expire/close exactly once");
++    }
++    QMetaObject::invokeMethod(&portal,[&]() {portal.silentTransport=false;},Qt::BlockingQueuedConnection);
++}
++
++void relinquishedOwner(FakePortal &portal,QDBusConnection &providerConnection)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.silentResponse=true;portal.createCalls=0;portal.selections=0;},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0,started=0;
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QTimer::singleShot(50,&loop,[&]() {
++        QMetaObject::invokeMethod(&portal,[&]() {require(providerConnection.unregisterService(QStringLiteral("org.freedesktop.portal.Desktop")),"owner relinquishment failed");},Qt::BlockingQueuedConnection);
++    });
++    QTimer::singleShot(3000,&loop,&QEventLoop::quit);session.start();loop.exec();
++    require(errors==1 && started==0 && providerConnection.isConnected() && portal.createCalls==1 && portal.selections==0,"name relinquishment with live unique owner did not revoke");
++    session.start();QTimer::singleShot(100,&loop,&QEventLoop::quit);loop.exec();
++    require(errors==1 && portal.createCalls==1,"failed name owner session retried");
++    QMetaObject::invokeMethod(&portal,[&]() {require(providerConnection.registerService(QStringLiteral("org.freedesktop.portal.Desktop")),"fixture owner restoration failed");portal.silentResponse=false;},Qt::BlockingQueuedConnection);
++}
++
++void responseOwnerAndTimeout(FakePortal &portal,QDBusConnection &providerConnection)
++{
++    QMetaObject::invokeMethod(&portal,[&]() {portal.forgeResponse=true;portal.handshake=false;portal.eisServer=nullptr;portal.forgedSent=0;portal.selections=0;},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession session;session.setProtectedSharing(true);QEventLoop loop;int errors=0,started=0;
++    QObject::connect(&session,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++    QObject::connect(&session,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QElapsedTimer elapsed;elapsed.start();QTimer deadline;deadline.setSingleShot(true);QObject::connect(&deadline,&QTimer::timeout,&loop,&QEventLoop::quit);deadline.start(16500);
++    session.start();loop.exec();
++    require(errors==1 && started==0 && portal.forgedSent==1 && portal.selections==0 && elapsed.elapsed()>=14000 && elapsed.elapsed()<16500,"foreign response bypassed pinned owner or request did not expire once");
++    QMetaObject::invokeMethod(&portal,[&]() {portal.forgeResponse=false;portal.ownerLoss=true;},Qt::BlockingQueuedConnection);
++    KRdp::PortalSession lost;lost.setProtectedSharing(true);errors=0;started=0;
++    QObject::connect(&lost,&KRdp::AbstractSession::error,&loop,[&]() {++errors;loop.quit();});
++    QObject::connect(&lost,&KRdp::AbstractSession::started,&loop,[&]() {++started;loop.quit();});
++    QTimer::singleShot(30,&loop,[&]() {
++        QMetaObject::invokeMethod(&portal,[&]() {providerConnection.unregisterObject(QStringLiteral("/org/freedesktop/portal/desktop"),QDBusConnection::UnregisterTree);},Qt::BlockingQueuedConnection);
++        providerConnection=QDBusConnection(QString());QDBusConnection::disconnectFromBus(QStringLiteral("fixture-provider"));
++    });
++    deadline.start(3000);lost.start();loop.exec();std::cerr << "OWNER_LOSS_COUNTS errors=" << errors << " started=" << started << '\n';require(errors==1 && started==0,"portal unique owner loss did not revoke pending session");
++    auto replacement=QDBusConnection::connectToBus(QString::fromLocal8Bit(qgetenv("DBUS_SESSION_BUS_ADDRESS")),QStringLiteral("replacement-provider"));
++    QMetaObject::invokeMethod(&portal,[&]() {
++        portal.ownerLoss=false;portal.createCalls=0;
++        require(replacement.registerService(QStringLiteral("org.freedesktop.portal.Desktop")),"replacement owner registration failed");
++        require(replacement.registerVirtualObject(QStringLiteral("/org/freedesktop/portal/desktop"),&portal,QDBusConnection::SubPath),"replacement portal export failed");
++    },Qt::BlockingQueuedConnection);
++    lost.start();QTimer::singleShot(100,&loop,&QEventLoop::quit);loop.exec();
++    require(errors==1 && started==0 && portal.createCalls==0,"failed session switched to replacement owner or retried setup");
++    QMetaObject::invokeMethod(&portal,[&]() {
++        replacement.unregisterObject(QStringLiteral("/org/freedesktop/portal/desktop"),QDBusConnection::UnregisterTree);
++        replacement.unregisterService(QStringLiteral("org.freedesktop.portal.Desktop"));
++    },Qt::BlockingQueuedConnection);
++    replacement=QDBusConnection(QString());QDBusConnection::disconnectFromBus(QStringLiteral("replacement-provider"));
++}
++}
++
++int main(int argc,char **argv)
++{
++    qInstallMessageHandler([](QtMsgType,const QMessageLogContext &,const QString &message) {std::cerr << "FIXTURE_QT " << message.toStdString() << '\n';});
++    QCoreApplication application(argc,argv);qDBusRegisterMetaType<FakeStream>();qDBusRegisterMetaType<QList<FakeStream>>();auto bus=QDBusConnection::connectToBus(QString::fromLocal8Bit(qgetenv("DBUS_SESSION_BUS_ADDRESS")),QStringLiteral("fixture-provider"));
++    require(bus.isConnected(),"private session bus required");FakePortal portal;portal.ownerName=bus.baseService();QThread portalThread;portal.moveToThread(&portalThread);portalThread.start();
++    QMetaObject::invokeMethod(&portal,[&]() {
++        require(bus.registerService(QStringLiteral("org.freedesktop.portal.Desktop")),"fixture portal ownership failed");
++        require(bus.registerVirtualObject(QStringLiteral("/org/freedesktop/portal/desktop"),&portal,QDBusConnection::SubPath),"fixture portal export failed");
++    },Qt::BlockingQueuedConnection);
++    absentPortalOwner(portal,bus);
++    runCase(portal,true,3,false);runCase(portal,false,1,false);runCase(portal,false,7,false);runCase(portal,true,0,true);
++    QMetaObject::invokeMethod(&portal,[&]() {portal.omitDevices=true;},Qt::BlockingQueuedConnection);
++    runCase(portal,true,0,false);
++    QMetaObject::invokeMethod(&portal,[&]() {portal.omitDevices=false;portal.wrongDevicesType=true;},Qt::BlockingQueuedConnection);
++    runCase(portal,false,3,false);
++    QMetaObject::invokeMethod(&portal,[&]() {portal.wrongDevicesType=false;portal.wrongClipboardType=true;},Qt::BlockingQueuedConnection);
++    runCase(portal,true,0,false);
++    QMetaObject::invokeMethod(&portal,[&]() {portal.wrongClipboardType=false;},Qt::BlockingQueuedConnection);
++    positiveView(portal);rejectedEisLatePipewire(portal);positivePortalEis(portal);
++    requestLifetime(portal);
++    transportLifetime(portal);
++    relinquishedOwner(portal,bus);
++    responseOwnerAndTimeout(portal,bus);
++    std::cerr << "FIXTURE_TEARDOWN owner-loss checks completed\n";
++    QMetaObject::invokeMethod(&portal,[&]() {
++        if (portal.pipewirePeer>=0) {close(portal.pipewirePeer);portal.pipewirePeer=-1;}
++        if (bus.isConnected()) {
++            bus.unregisterObject(QStringLiteral("/org/freedesktop/portal/desktop"),QDBusConnection::UnregisterTree);
++            bus.unregisterService(QStringLiteral("org.freedesktop.portal.Desktop"));
++        }
++        portal.moveToThread(application.thread());
++    },Qt::BlockingQueuedConnection);
++    std::cerr << "FIXTURE_TEARDOWN portal returned to main thread\n";
++    portalThread.quit();require(portalThread.wait(5000),"private portal thread did not stop");
++    std::cerr << "FIXTURE_TEARDOWN thread joined\n";
++    std::cout << "private-bus protected device mismatch/clipboard refusal and no persistence/transport calls passed\n";
++}
+diff --git a/server/SessionController.cpp b/server/SessionController.cpp
+index ea7f331..7ee1e00 100644
+--- a/server/SessionController.cpp
++++ b/server/SessionController.cpp
+@@ -38,7 +38,7 @@ class SessionWrapper : public QObject
+ {
+     Q_OBJECT
+ public:
+-    SessionWrapper(KRdp::RdpConnection *conn, std::unique_ptr<KRdp::AbstractSession> &&sess, KStatusNotifierItem *sni)
++    SessionWrapper(KRdp::RdpConnection *conn, std::unique_ptr<KRdp::AbstractSession> &&sess, KStatusNotifierItem *sni, bool allowClipboard)
+         : session(std::move(sess))
+         , connection(conn)
+     {
+@@ -46,15 +46,19 @@ public:
+ 
+         connect(session.get(), &KRdp::AbstractSession::error, this, &SessionWrapper::sessionError);
+         connect(session.get(), &KRdp::AbstractSession::started, this, &SessionWrapper::onSessionStarted);
+-        connect(session.get(), &KRdp::AbstractSession::clipboardDataChanged, connection->clipboard(), &KRdp::Clipboard::setServerData);
++        if (allowClipboard) {
++            connect(session.get(), &KRdp::AbstractSession::clipboardDataChanged, connection->clipboard(), &KRdp::Clipboard::setServerData);
++        }
+ 
+         connect(connection->videoStream(), &KRdp::VideoStream::cursorChanged, this, &SessionWrapper::onCursorUpdate);
+         connect(connection->videoStream(), &KRdp::VideoStream::sizeChanged, session.get(), &KRdp::AbstractSession::setSize);
+         connect(connection->videoStream(), &KRdp::VideoStream::enabledChanged, this, &SessionWrapper::onVideoStreamEnabledChanged);
+         connect(connection->inputHandler(), &KRdp::InputHandler::inputEvent, session.get(), &KRdp::AbstractSession::sendEvent);
+-        connect(connection->clipboard(), &KRdp::Clipboard::clientDataChanged, session.get(), [clipboard = connection->clipboard(), this]() {
+-            session->setClipboardData(clipboard->getClipboard());
+-        });
++        if (allowClipboard) {
++            connect(connection->clipboard(), &KRdp::Clipboard::clientDataChanged, session.get(), [clipboard = connection->clipboard(), this]() {
++                session->setClipboardData(clipboard->getClipboard());
++            });
++        }
+         connect(connection->displayControl(), &KRdp::DisplayControl::requestedScreenSizeChanged, connection->videoStream(), &KRdp::VideoStream::setRequestedSize);
+ 
+         connect(connection, &QObject::destroyed, this, &SessionWrapper::onConnectionDestroyed);
+@@ -204,7 +208,11 @@ void SessionController::onNewConnection(KRdp::RdpConnection *newConnection)
+             return;
+         }
+ 
+-        auto wrapper = std::make_unique<SessionWrapper>(newConnection, makeSession(), m_sni);
++        if (m_server->protectedSharing() && (m_operatingMode != OperationMode::SharedAccess || m_virtualMonitor)) {
++            newConnection->close(KRdp::RdpConnection::CloseReason::None);
++            return;
++        }
++        auto wrapper = std::make_unique<SessionWrapper>(newConnection, makeSession(), m_sni, !m_server->protectedSharing());
+         if (m_virtualMonitor) {
+             wrapper->session->setVirtualMonitor(*m_virtualMonitor);
+         } else if (m_monitorIndex) {
+@@ -275,7 +283,11 @@ std::unique_ptr<KRdp::AbstractSession> SessionController::makeSession()
+     } else
+ #endif
+     {
+-        return std::make_unique<KRdp::PortalSession>();
++        auto session = std::make_unique<KRdp::PortalSession>();
++        if (m_server->protectedSharing()) {
++            session->setProtectedSharing(m_server->viewOnly());
++        }
++        return session;
+     }
+ }
+ 
+diff --git a/server/SharingArguments.h b/server/SharingArguments.h
+new file mode 100644
+index 0000000..124b144
+--- /dev/null
++++ b/server/SharingArguments.h
+@@ -0,0 +1,59 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#pragma once
++#include <arpa/inet.h>
++#include <charconv>
++#include <filesystem>
++#include <map>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++namespace EnzimOS {
++inline bool protectedInvocation(int argc, char **argv) {
++    for (int i=1;i<argc;++i) {
++        const std::string_view value(argv[i]);
++        if (value.starts_with("--sharing-password-fd") || value.starts_with("-sharing-password-fd")) return true;
++    }
++    return false;
++}
++inline std::optional<int> canonicalNumber(std::string_view text,int minimum,int maximum) {
++    int result=0;auto parsed=std::from_chars(text.data(),text.data()+text.size(),result);
++    if (parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size() || result<minimum || result>maximum || std::to_string(result)!=text) return std::nullopt;
++    return result;
++}
++inline bool certificatePath(std::string_view text) {
++    if (text.empty() || text.size()>4096) return false;
++    for (unsigned char c:text) if (c<32 || c==127) return false;
++    const std::filesystem::path path(text);
++    if (!path.is_absolute() || path.lexically_normal()!=path || path.filename().empty()) return false;
++    for (const auto &part:path) if (part=="." || part=="..") return false;
++    return true;
++}
++inline bool concreteAddress(std::string_view text) {
++    const std::string value(text);char rendered[INET6_ADDRSTRLEN]{};
++    in_addr v4{};
++    if (inet_pton(AF_INET,value.c_str(),&v4)==1) {
++        const auto bytes=ntohl(v4.s_addr);
++        return bytes!=0 && bytes!=0xffffffffU && (bytes&0xf0000000U)!=0xe0000000U && inet_ntop(AF_INET,&v4,rendered,sizeof(rendered)) && value==rendered;
++    }
++    in6_addr v6{};
++    if (inet_pton(AF_INET6,value.c_str(),&v6)!=1 || IN6_IS_ADDR_UNSPECIFIED(&v6) || IN6_IS_ADDR_MULTICAST(&v6) || IN6_IS_ADDR_V4MAPPED(&v6)) return false;
++    return inet_ntop(AF_INET6,&v6,rendered,sizeof(rendered)) && value==rendered;
++}
++inline bool protectedArguments(const std::vector<std::string_view> &args) {
++    if (args.size()<14 || args.size()>15) return false;
++    std::map<std::string_view,std::string_view> values;
++    bool view=false;
++    for (size_t i=0;i<args.size();++i) {
++        const auto name=args[i];
++        if (name=="--view-only") {if(view)return false;view=true;continue;}
++        if (name!="--sharing-password-fd" && name!="--listener-fd" && name!="--address" && name!="--port" && name!="--certificate" && name!="--certificate-key" && name!="--mode") return false;
++        if (++i>=args.size() || !values.emplace(name,args[i]).second) return false;
++    }
++    if(values.size()!=7) return false;
++    const auto credential=canonicalNumber(values["--sharing-password-fd"],3,1024);
++    const auto listener=canonicalNumber(values["--listener-fd"],3,1024);
++    return credential && listener && credential!=listener && canonicalNumber(values["--port"],1024,65535) && concreteAddress(values["--address"]) && certificatePath(values["--certificate"]) && certificatePath(values["--certificate-key"]) && values["--certificate"]!=values["--certificate-key"] && values["--mode"]=="SharedAccess";
++}
++}
+diff --git a/server/SharingPassword.cpp b/server/SharingPassword.cpp
+new file mode 100644
+index 0000000..572c215
+--- /dev/null
++++ b/server/SharingPassword.cpp
+@@ -0,0 +1,95 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "SharingPassword.h"
++
++#include <array>
++#include <cerrno>
++#include <fcntl.h>
++#include <linux/close_range.h>
++#include <sys/prctl.h>
++#include <sys/resource.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace EnzimOS
++{
++namespace
++{
++void erase(char *bytes, size_t size)
++{
++    volatile char *cursor = bytes;
++    while (size-- > 0) {
++        *cursor++ = 0;
++    }
++}
++
++struct Descriptor {
++    int value;
++    ~Descriptor() { close(value); }
++};
++
++struct Buffer {
++    std::array<char, 128> bytes{};
++    ~Buffer() { erase(bytes.data(), bytes.size()); }
++};
++
++bool tokenCharacter(unsigned char value)
++{
++    return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '_' || value == '-';
++}
++}
++
++SharingPassword::~SharingPassword()
++{
++    erase(m_value.data(), m_value.size());
++}
++
++bool protectSharingCredentials()
++{
++    const rlimit limit{0, 0};
++    return setrlimit(RLIMIT_CORE, &limit) == 0 && prctl(PR_SET_DUMPABLE, 0) == 0
++        && close_range(3, 1024, CLOSE_RANGE_CLOEXEC) == 0;
++}
++
++std::optional<SharingPassword> readSharingPassword(int ownedFd)
++{
++    if (ownedFd < 3 || ownedFd > 1024) {
++        return std::nullopt;
++    }
++    const Descriptor descriptor{ownedFd};
++    constexpr int seals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE;
++    struct stat before{};
++    if (fstat(ownedFd, &before) != 0 || !S_ISREG(before.st_mode) || before.st_uid != getuid() || before.st_nlink != 0
++        || (before.st_mode & 0777) != 0600 || before.st_size < 32 || before.st_size > 128) {
++        return std::nullopt;
++    }
++    const int actualSeals = fcntl(ownedFd, F_GET_SEALS);
++    if (actualSeals < 0 || (actualSeals & seals) != seals) {
++        return std::nullopt;
++    }
++    Buffer buffer;
++    size_t used = 0;
++    const size_t size = static_cast<size_t>(before.st_size);
++    while (used < size) {
++        const ssize_t count = pread(ownedFd, buffer.bytes.data() + used, size - used, static_cast<off_t>(used));
++        if (count < 0 && errno == EINTR) {
++            continue;
++        }
++        if (count <= 0) {
++            return std::nullopt;
++        }
++        used += static_cast<size_t>(count);
++    }
++    for (size_t i = 0; i < size; ++i) {
++        if (!tokenCharacter(static_cast<unsigned char>(buffer.bytes[i]))) {
++            return std::nullopt;
++        }
++    }
++    struct stat after{};
++    if (fstat(ownedFd, &after) != 0 || before.st_dev != after.st_dev || before.st_ino != after.st_ino || before.st_size != after.st_size
++        || before.st_uid != after.st_uid || before.st_mode != after.st_mode || before.st_nlink != after.st_nlink) {
++        return std::nullopt;
++    }
++    return SharingPassword(std::string(buffer.bytes.data(), size));
++}
++}
+diff --git a/server/SharingPassword.h b/server/SharingPassword.h
+new file mode 100644
+index 0000000..df02a13
+--- /dev/null
++++ b/server/SharingPassword.h
+@@ -0,0 +1,34 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#pragma once
++
++#include <optional>
++#include <string>
++#include <utility>
++
++namespace EnzimOS
++{
++class SharingPassword
++{
++public:
++    explicit SharingPassword(std::string value)
++        : m_value(std::move(value))
++    {
++    }
++    SharingPassword(const SharingPassword &) = delete;
++    SharingPassword &operator=(const SharingPassword &) = delete;
++    SharingPassword(SharingPassword &&other) noexcept
++        : m_value(std::move(other.m_value))
++    {
++    }
++    ~SharingPassword();
++    const std::string &value() const { return m_value; }
++
++private:
++    std::string m_value;
++};
++
++bool protectSharingCredentials();
++// Consumes an inherited descriptor in [3, 1024]; the sender's descriptor is separate.
++std::optional<SharingPassword> readSharingPassword(int ownedFd);
++}
+diff --git a/server/SharingPasswordTest.cpp b/server/SharingPasswordTest.cpp
+new file mode 100644
+index 0000000..d74539c
+--- /dev/null
++++ b/server/SharingPasswordTest.cpp
+@@ -0,0 +1,130 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#include "SharingPassword.h"
++#include "SharingArguments.h"
++
++#include <cerrno>
++#include <cstdio>
++#include <cstdlib>
++#include <fcntl.h>
++#include <iostream>
++#include <string>
++#include <sys/mman.h>
++#include <sys/prctl.h>
++#include <sys/resource.h>
++#include <sys/stat.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++namespace
++{
++constexpr int allSeals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE;
++void require(bool value, const char *message)
++{
++    if (!value) {
++        std::cerr << message << '\n';
++        std::exit(1);
++    }
++}
++
++int input(const std::string &text, int seals = allSeals, mode_t mode = 0600)
++{
++    int fd = memfd_create("rdp-test-credential", MFD_CLOEXEC | MFD_ALLOW_SEALING);
++    require(fd >= 3, "memfd creation failed");
++    require(fchmod(fd, mode) == 0, "mode setup failed");
++    require(write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size()), "fixture write failed");
++    require(fcntl(fd, F_ADD_SEALS, seals) == 0, "sealing failed");
++    return fd;
++}
++
++void refused(int ownedFd)
++{
++    require(!EnzimOS::readSharingPassword(ownedFd).has_value(), "invalid credential accepted");
++    errno = 0;
++    require(fcntl(ownedFd, F_GETFD) == -1 && errno == EBADF, "owned rejected descriptor leaked");
++}
++}
++
++int main(int argc, char **argv)
++{
++    if (argc == 3 && std::string(argv[1]) == "--closed-fd") {
++        errno = 0;
++        return fcntl(std::atoi(argv[2]), F_GETFD) == -1 && errno == EBADF ? 0 : 1;
++    }
++    const std::vector<std::string_view> valid = {"--sharing-password-fd","63","--listener-fd","64","--address","127.0.0.1","--port","3389","--certificate","/home/user/server.crt","--certificate-key","/home/user/server.key","--mode","SharedAccess"};
++    require(EnzimOS::protectedArguments(valid), "closed protected arguments refused");
++    auto view = valid; view.push_back("--view-only");
++    require(EnzimOS::protectedArguments(view), "protected view-only refused");
++    for (const auto &[index,bad] : std::vector<std::pair<size_t,std::string_view>>{{1,"063"},{1,"+63"},{3,"63"},{5,"0.0.0.0"},{5,"224.0.0.1"},{5,"255.255.255.255"},{5,"::"},{5,"ff02::1"},{7,"0"},{7,"65536"},{7,"03389"},{9,"relative.crt"},{9,"/home/../user/server.crt"},{11,"/home/user/server.crt"},{13,"RemoteAccess"}}) {
++        auto malformed = valid; malformed[index] = bad;
++        require(!EnzimOS::protectedArguments(malformed), "invalid protected arguments accepted");
++    }
++    auto plugin = valid; plugin.insert(plugin.begin(),{"-platformpluginpath","/tmp/plugin"});
++    require(!EnzimOS::protectedArguments(plugin), "Qt plugin injection accepted");
++    auto missing = valid; missing.erase(missing.begin()+2,missing.begin()+4);
++    require(!EnzimOS::protectedArguments(missing), "protected bind fallback accepted");
++    auto duplicate = view; duplicate.push_back("--view-only");
++    require(!EnzimOS::protectedArguments(duplicate), "duplicate flag accepted");
++    int inherited = input(std::string(32, 'A'));
++    require(fcntl(inherited, F_SETFD, 0) == 0, "inherited descriptor setup failed");
++    require(EnzimOS::protectSharingCredentials(), "process privacy setup failed");
++    require((fcntl(inherited, F_GETFD) & FD_CLOEXEC) != 0, "credential can escape into an exec child");
++    pid_t child = fork();
++    require(child >= 0, "exec fixture fork failed");
++    if (child == 0) {
++        const std::string number = std::to_string(inherited);
++        execl("/proc/self/exe", argv[0], "--closed-fd", number.c_str(), static_cast<char *>(nullptr));
++        _exit(127);
++    }
++    int status = 0;
++    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "credential survived child exec");
++    require(fcntl(inherited, F_GETFD) >= 0, "parent credential closed by privacy setup");
++    close(inherited);
++    rlimit limit{};
++    require(getrlimit(RLIMIT_CORE, &limit) == 0 && limit.rlim_cur == 0 && limit.rlim_max == 0, "core limit missing");
++    require(prctl(PR_GET_DUMPABLE) == 0, "process is dumpable");
++    for (size_t size : {32u, 128u}) {
++        std::string expected(size, 'A');
++        expected.replace(0, 8, "aZ09_-bc");
++        int parent = input(expected);
++        require(lseek(parent, 7, SEEK_SET) == 7, "offset setup failed");
++        int child = fcntl(parent, F_DUPFD_CLOEXEC, 3);
++        require(child >= 3, "descriptor duplication failed");
++        auto value = EnzimOS::readSharingPassword(child);
++        require(value.has_value() && value->value() == expected, "sealed credential changed");
++        require(fcntl(child, F_GETFD) == -1 && errno == EBADF, "consumed descriptor leaked");
++        require(lseek(parent, 0, SEEK_CUR) == 7, "sender offset changed");
++        char first = 0;
++        require(pread(parent, &first, 1, 0) == 1 && first == expected[0], "sender descriptor lost");
++        require(pwrite(parent, "X", 1, 0) == -1 && errno == EPERM, "sealed write accepted");
++        close(parent);
++    }
++    for (int missing : {F_SEAL_SEAL, F_SEAL_GROW, F_SEAL_SHRINK, F_SEAL_WRITE}) {
++        refused(input(std::string(32, 'A'), allSeals & ~missing));
++    }
++    for (size_t size : {0u, 31u, 129u}) {
++        refused(input(std::string(size, 'A')));
++    }
++    for (mode_t mode : {0400u, 0640u, 0604u, 0700u}) {
++        refused(input(std::string(32, 'A'), allSeals, mode));
++    }
++    for (char invalid : {'\0', '\n', '\r', ' ', '=', static_cast<char>(0xff)}) {
++        std::string text(32, 'A');
++        text[15] = invalid;
++        refused(input(text));
++    }
++    int pipeFds[2];
++    require(pipe2(pipeFds, O_CLOEXEC) == 0, "pipe fixture failed");
++    refused(pipeFds[0]);
++    close(pipeFds[1]);
++    FILE *file = tmpfile();
++    require(file != nullptr, "ordinary file fixture failed");
++    require(fwrite(std::string(32, 'A').data(), 1, 32, file) == 32 && fflush(file) == 0, "ordinary file write failed");
++    int copy = fcntl(fileno(file), F_DUPFD_CLOEXEC, 3);
++    require(copy >= 3, "ordinary file duplication failed");
++    refused(copy);
++    fclose(file);
++    require(!EnzimOS::readSharingPassword(-1) && !EnzimOS::readSharingPassword(1), "reserved descriptor accepted");
++    require(fcntl(1, F_GETFD) != -1, "stdout closed by invalid input");
++    std::cout << "sealed input, size/syntax/mode refusals, descriptor lifetime and process privacy passed\n";
++}
+diff --git a/server/main.cpp b/server/main.cpp
+index c5a2a91..17af96b 100644
+--- a/server/main.cpp
++++ b/server/main.cpp
+@@ -3,6 +3,7 @@
+ // SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
+ 
+ #include <csignal>
++#include <cstdio>
+ #include <filesystem>
+ 
+ #include <QApplication>
+@@ -10,7 +11,6 @@
+ #include <QRegularExpression>
+ 
+ #include <KAboutData>
+-#include <KCrash>
+ #include <KSharedConfig>
+ #include <KSignalHandler>
+ 
+@@ -18,6 +18,8 @@
+ 
+ #include "Server.h"
+ #include "SessionController.h"
++#include "SharingPassword.h"
++#include "SharingArguments.h"
+ #include "krdp_version.h"
+ #include "krdpserversettings.h"
+ 
+@@ -40,6 +42,20 @@ static std::optional<SessionController::OperationMode> parseOperationMode(QAnySt
+ 
+ int main(int argc, char **argv)
+ {
++    if (!EnzimOS::protectSharingCredentials()) {
++        std::fputs("Protected sharing process setup failed\n", stderr);
++        return 1;
++    }
++    const bool rawProtected = EnzimOS::protectedInvocation(argc, argv);
++    if (rawProtected) {
++        std::vector<std::string_view> arguments;
++        for (int i=1;i<argc;++i) arguments.emplace_back(argv[i]);
++        // Qt consumes platform/plugin switches during QApplication construction.
++        if (!EnzimOS::protectedArguments(arguments)) {
++            std::fputs("Protected sharing arguments refused\n", stderr);
++            return 1;
++        }
++    }
+     QApplication application{argc, argv};
+     application.setApplicationName(u"krdp-server"_s);
+     application.setApplicationDisplayName(u"KRDP Server"_s);
+@@ -48,14 +64,15 @@ int main(int argc, char **argv)
+     about.setDesktopFileName(u"org.kde.krdpserver"_s);
+     KAboutData::setApplicationData(about);
+ 
+-    KCrash::initialize();
+-
+     QCommandLineParser parser;
+     parser.setApplicationDescription(
+         u"An RDP server that exposes the current desktop session over the RDP protocol.\nNote that a valid TLS certificate and key is needed. If not provided, a temporary certificate will be generated."_s);
+     parser.addOptions({
+         {{u"u"_s, u"username"_s}, u"The username to use for login"_s, u"username"_s},
+         {{u"p"_s, u"password"_s}, u"The password to use for login. Requires username to be passed as well."_s, u"password"_s},
++        {u"sharing-password-fd"_s, u"Consume a private sealed descriptor for the generated enzimos sharing identity. No PAM or keychain fallback."_s, u"fd"_s},
++        {u"listener-fd"_s, u"Borrow the reserved listening socket for protected sharing; never bind a replacement."_s, u"fd"_s},
++        {u"view-only"_s, u"Suppress remote keyboard and pointer events for protected sharing."_s},
+         {u"address"_s, u"The address to listen on for connections. Defaults to 0.0.0.0"_s, u"address"_s},
+         {u"port"_s, u"The port to use for connections. Defaults to 3389."_s, u"port"_s, u"3389"_s},
+         {u"certificate"_s, u"The TLS certificate file to use."_s, u"certificate"_s, u"server.crt"_s},
+@@ -80,6 +97,31 @@ int main(int argc, char **argv)
+     parser.process(application);
+     about.processCommandLine(&parser);
+ 
++    const bool protectedSharing = parser.isSet(u"sharing-password-fd"_s);
++    if (protectedSharing != rawProtected) return 1;
++    int sharingFd = -1;
++    if (protectedSharing) {
++        bool validFd = false;
++        sharingFd = parser.value(u"sharing-password-fd"_s).toInt(&validFd);
++        if (!validFd || sharingFd < 3 || sharingFd > 1024 || parser.isSet(u"username"_s) || parser.isSet(u"password"_s)) {
++            qWarning() << "Protected sharing credential input unavailable";
++            return 1;
++        }
++    }
++
++    int listenerFd = -1;
++    if (parser.isSet(u"listener-fd"_s)) {
++        bool valid = false;
++        listenerFd = parser.value(u"listener-fd"_s).toInt(&valid);
++        if (!protectedSharing || !valid || listenerFd < 3 || listenerFd > 1024 || listenerFd == sharingFd
++            || !parser.isSet(u"address"_s) || !parser.isSet(u"port"_s)
++            || !parser.isSet(u"mode"_s) || parser.value(u"mode"_s) != u"SharedAccess"_s
++            || parser.isSet(u"virtual-monitor"_s)) {
++            qWarning() << "Protected sharing listener input unavailable";
++            return 1;
++        }
++    }
++
+     KSignalHandler::self()->watchSignal(SIGINT);
+     KSignalHandler::self()->watchSignal(SIGTERM);
+     QObject::connect(KSignalHandler::self(), &KSignalHandler::signalReceived, &application, [](int) {
+@@ -112,9 +154,25 @@ int main(int argc, char **argv)
+ 
+     server.setTlsCertificate(certificate);
+     server.setTlsCertificateKey(certificateKey);
++    if (listenerFd >= 0 && !server.setReservedListener(listenerFd)) {
++        qWarning() << "Protected sharing listener refused";
++        return 1;
++    }
+ 
+-    // Use parsed username/pw if set
+-    if (parser.isSet(u"username"_s)) {
++    if (protectedSharing) {
++        auto password = EnzimOS::readSharingPassword(sharingFd);
++        if (!password) {
++            qWarning() << "Protected sharing credential refused";
++            return 1;
++        }
++        server.setUsePAMAuthentication(false);
++        server.setProtectedSharing(parser.isSet(u"view-only"_s));
++        KRdp::User user;
++        user.name = u"enzimos"_s;
++        user.readOnly = parser.isSet(u"view-only"_s);
++        user.password = QString::fromLatin1(password->value().data(), static_cast<qsizetype>(password->value().size()));
++        server.addUser(user);
++    } else if (parser.isSet(u"username"_s)) {
+         KRdp::User user;
+         user.name = parser.value(u"username"_s);
+         user.password = parser.value(u"password"_s);
+@@ -159,8 +217,8 @@ int main(int argc, char **argv)
+     } else {
+         controller.setMonitorIndex(parser.isSet(u"monitor"_s) ? std::optional(parser.value(u"monitor"_s).toInt()) : std::nullopt);
+     }
+-    controller.setQuality(parserValueWithDefault(u"quality", config->quality()));
+-    controller.setAdaptiveQuality((parser.isSet(u"adaptive-quality"_s) || config->adaptiveQuality()) && !parser.isSet(u"static-quality"_s));
++    controller.setQuality(protectedSharing ? 80 : parserValueWithDefault(u"quality", config->quality()));
++    controller.setAdaptiveQuality(!protectedSharing && (parser.isSet(u"adaptive-quality"_s) || config->adaptiveQuality()) && !parser.isSet(u"static-quality"_s));
+     if (parser.isSet(u"mode"_s)) {
+         const auto mode = parseOperationMode(parser.value(u"mode"_s));
+         if (!mode) {
+diff --git a/src/AbstractSession.cpp b/src/AbstractSession.cpp
+index 8fe524b..227e4b4 100644
+--- a/src/AbstractSession.cpp
++++ b/src/AbstractSession.cpp
+@@ -27,13 +27,26 @@ public:
+     int pipeWireFd = -1;
+     quint64 objectSerial = quint64(-1);
+ 
++    bool clipboardEnabled = false;
+     QMetaObject::Connection clipboardConnection;
+ };
+ 
+-AbstractSession::AbstractSession()
++AbstractSession::AbstractSession(bool observeClipboard)
+     : QObject()
+     , d(std::make_unique<Private>())
+ {
++    setClipboardEnabled(observeClipboard);
++}
++
++void AbstractSession::setClipboardEnabled(bool enabled)
++{
++    if (d->clipboardEnabled == enabled) return;
++    d->clipboardEnabled = enabled;
++    if (!enabled) {
++        disconnect(d->clipboardConnection);
++        d->clipboardConnection = {};
++        return;
++    }
+     d->clipboardConnection = connect(KSystemClipboard::instance(), &KSystemClipboard::changed, this, [this](auto mode) {
+         if (mode != QClipboard::Clipboard) {
+             return;
+@@ -72,6 +85,7 @@ AbstractSession::~AbstractSession()
+ 
+ void AbstractSession::setClipboardData(std::unique_ptr<QMimeData> data)
+ {
++    if (!d->clipboardEnabled) return;
+     if (data) {
+         KSystemClipboard::instance()->setMimeData(data.release(), QClipboard::Clipboard);
+     } else {
+diff --git a/src/AbstractSession.h b/src/AbstractSession.h
+index 5c2c0e7..ac7e82c 100644
+--- a/src/AbstractSession.h
++++ b/src/AbstractSession.h
+@@ -31,7 +31,7 @@ class KRDP_EXPORT AbstractSession : public QObject
+ {
+     Q_OBJECT
+ public:
+-    AbstractSession();
++    explicit AbstractSession(bool observeClipboard = true);
+     ~AbstractSession() override;
+ 
+     /**
+@@ -78,6 +78,7 @@ protected:
+     std::optional<VirtualMonitor> virtualMonitor() const;
+     std::optional<int> activeStream() const;
+ 
++    void setClipboardEnabled(bool enabled);
+     void setStarted(bool started);
+     void setLogicalSize(QSize size);
+     void setNodeId(quint32 nodeId);
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index d50ac72..a79560b 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -94,4 +94,6 @@ install(TARGETS KRdp DESTINATION ${KDE_INSTALL_LIBDIR})
+ 
+ ecm_qt_install_logging_categories(EXPORT KRdp DESTINATION ${KDE_INSTALL_LOGGINGCATEGORIESDIR})
+ 
+-add_subdirectory(kcm)
++if(BUILD_SETTINGS)
++    add_subdirectory(kcm)
++endif()
+diff --git a/src/EiConnection.cpp b/src/EiConnection.cpp
+index 1758ec4..3b2ab90 100644
+--- a/src/EiConnection.cpp
++++ b/src/EiConnection.cpp
+@@ -5,12 +5,14 @@
+ #include "EiConnection.h"
+ 
+ #include <QMouseEvent>
++#include <QPointer>
+ #include <QScopeGuard>
+ #include <QSocketNotifier>
+ #include <QWheelEvent>
+ 
+ #include <libei.h>
+ #include <linux/input.h>
++#include <unistd.h>
+ 
+ #include "krdp_logging.h"
+ 
+@@ -91,6 +93,7 @@ EiConnection::EiConnection(int fd, QObject *parent)
+     m_ei = ei_new_sender(this);
+     if (!m_ei) {
+         qCWarning(KRDP) << "Could not create libei sender context";
++        ::close(fd);
+         return;
+     }
+ 
+@@ -123,11 +126,19 @@ bool EiConnection::isValid() const
+     return m_ei;
+ }
+ 
++bool EiConnection::isConnected() const
++{
++    return m_connected;
++}
++
+ void EiConnection::sendEvent(const std::shared_ptr<QEvent> &event, const QSize &streamSize, const QString &mappingId)
+ {
++    if (!m_connected) {
++        return;
++    }
+     const auto findPointerDeviceWithCapability = [this](enum ei_device_capability capability) -> EisPointerDevice * {
+         for (const auto &pointerDevice : m_pointerDevices) {
+-            if (ei_device_has_capability(pointerDevice->device(), capability)) {
++            if (m_activeDevices.contains(pointerDevice->device()) && ei_device_has_capability(pointerDevice->device(), capability)) {
+                 return pointerDevice.get();
+             }
+         }
+@@ -138,6 +149,7 @@ void EiConnection::sendEvent(const std::shared_ptr<QEvent> &event, const QSize &
+     const auto findPointerDeviceForMappingId =
+         [this](const QString &mappingId) -> std::optional<std::pair<EisPointerDevice *, EisPointerDevice::Region>> {
+         for (const auto &pointerDevice : m_pointerDevices) {
++            if (!m_activeDevices.contains(pointerDevice->device())) continue;
+             const auto region = pointerDevice->regionForMapping(mappingId);
+             if (region.has_value()) {
+                 return std::pair{pointerDevice.get(), *region};
+@@ -207,6 +219,7 @@ void EiConnection::sendEvent(const std::shared_ptr<QEvent> &event, const QSize &
+             devicePosition = me->position();
+         }
+ 
++        if (!pointerDevice) return;
+         ei_device_pointer_motion_absolute(pointerDevice->device(), devicePosition.x(), devicePosition.y());
+         ei_device_frame(pointerDevice->device(), ei_now(m_ei));
+         break;
+@@ -228,14 +241,14 @@ void EiConnection::sendEvent(const std::shared_ptr<QEvent> &event, const QSize &
+         const auto isPress = event->type() == QEvent::KeyPress;
+ 
+         if (ke->nativeScanCode()) {
+-            if (!m_ei || !m_keyboardDevice) {
++            if (!m_ei || !m_keyboardDevice || !m_activeDevices.contains(m_keyboardDevice->device())) {
+                 qCWarning(KRDP) << "Keyboard event received but no keyboard device is available.";
+                 return;
+             }
+             ei_device_keyboard_key(m_keyboardDevice->device(), ke->nativeScanCode(), isPress);
+             ei_device_frame(m_keyboardDevice->device(), ei_now(m_ei));
+         } else if (ke->nativeVirtualKey()) {
+-            if (!m_ei || !m_textDevice) {
++            if (!m_ei || !m_textDevice || !m_activeDevices.contains(m_textDevice->device())) {
+                 qCWarning(KRDP) << "Keyboard event received but no text device is available.";
+                 return;
+             }
+@@ -251,6 +264,7 @@ void EiConnection::sendEvent(const std::shared_ptr<QEvent> &event, const QSize &
+ 
+ void EiConnection::processEisEvents()
+ {
++    QPointer<EiConnection> alive(this);
+     while (auto event = ei_get_event(m_ei)) {
+         auto cleanup = qScopeGuard([event] {
+             ei_event_unref(event);
+@@ -261,11 +275,17 @@ void EiConnection::processEisEvents()
+ 
+         switch (eventType) {
+         case EI_EVENT_CONNECT:
++            m_connected = true;
++            Q_EMIT connected();
++            if (!alive) return;
+             break;
+         case EI_EVENT_DISCONNECT:
++            m_connected = false;
++            m_activeDevices.clear();
++            m_eisNotifier->setEnabled(false);
+             qCWarning(KRDP) << "Portal EIS connection disconnected";
+             Q_EMIT error();
+-            break;
++            return;
+         case EI_EVENT_SEAT_ADDED: {
+             auto seat = ei_event_get_seat(event);
+             ei_seat_bind_capabilities(seat,
+@@ -294,9 +314,9 @@ void EiConnection::processEisEvents()
+             if (!m_textDevice && ei_device_has_capability(device, EI_DEVICE_CAP_TEXT)) {
+                 m_textDevice.reset(new EiDevice(device));
+             }
+-            ei_device_start_emulating(device, ei_now(m_ei));
+             break;
+         case EI_EVENT_DEVICE_REMOVED:
++            m_activeDevices.erase(device);
+             std::erase_if(m_pointerDevices, [device](const auto &pointerDevice) {
+                 return pointerDevice->device() == device;
+             });
+@@ -308,7 +328,12 @@ void EiConnection::processEisEvents()
+             }
+             break;
+         case EI_EVENT_DEVICE_RESUMED:
++            m_activeDevices.insert(device);
+             ei_device_start_emulating(device, ei_now(m_ei));
++            break;
++        case EI_EVENT_DEVICE_PAUSED:
++            m_activeDevices.erase(device);
++            break;
+         default:
+             break;
+         }
+diff --git a/src/EiConnection.h b/src/EiConnection.h
+index 8b1753a..fb39e4d 100644
+--- a/src/EiConnection.h
++++ b/src/EiConnection.h
+@@ -6,6 +6,7 @@
+ 
+ #include <memory>
+ #include <vector>
++#include <unordered_set>
+ 
+ #include <QObject>
+ 
+@@ -16,6 +17,7 @@ class QSize;
+ class QString;
+ class QSocketNotifier;
+ struct ei;
++struct ei_device;
+ 
+ namespace KRdp
+ {
+@@ -32,10 +34,12 @@ public:
+     ~EiConnection() override;
+ 
+     [[nodiscard]] bool isValid() const;
++    [[nodiscard]] bool isConnected() const;
+     void sendEvent(const std::shared_ptr<QEvent> &event, const QSize &streamSize, const QString &mappingId);
+ 
+ Q_SIGNALS:
+     void error();
++    void connected();
+ 
+ private:
+     void processEisEvents();
+@@ -43,6 +47,8 @@ private:
+ 
+     std::unique_ptr<QSocketNotifier> m_eisNotifier;
+     struct ei *m_ei = nullptr;
++    bool m_connected = false;
++    std::unordered_set<struct ei_device *> m_activeDevices;
+     std::vector<std::unique_ptr<EisPointerDevice>> m_pointerDevices;
+     std::unique_ptr<EiDevice> m_keyboardDevice;
+     std::unique_ptr<EiDevice> m_textDevice;
+diff --git a/src/InheritedListener.h b/src/InheritedListener.h
+new file mode 100644
+index 0000000..8abfa36
+--- /dev/null
++++ b/src/InheritedListener.h
+@@ -0,0 +1,77 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#pragma once
++
++#include <array>
++#include <cstring>
++#include <utility>
++#include <fcntl.h>
++#include <netinet/in.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#include <QHostAddress>
++#include <QNetworkProxy>
++#include <QTcpServer>
++
++namespace EnzimOS
++{
++inline bool listenerMatches(int fd, const QHostAddress &address, quint16 port)
++{
++    if (fd < 3 || fd > 1024 || port < 1024 || address.isNull() || address.isMulticast()
++        || address == QHostAddress::Any || address == QHostAddress::AnyIPv4 || address == QHostAddress::AnyIPv6) {
++        return false;
++    }
++    struct stat info{};
++    if (fstat(fd, &info) != 0 || !S_ISSOCK(info.st_mode) || (info.st_uid != 0 && info.st_uid != getuid())) {
++        return false;
++    }
++    const std::array<std::pair<int, int>, 5> options{{{SO_TYPE, SOCK_STREAM}, {SO_PROTOCOL, IPPROTO_TCP}, {SO_ACCEPTCONN, 1}, {SO_REUSEPORT, 0}, {SO_REUSEADDR, 0}}};
++    for (const auto &[option, expected] : options) {
++        int value = -1;
++        socklen_t length = sizeof(value);
++        if (getsockopt(fd, SOL_SOCKET, option, &value, &length) != 0 || length != sizeof(value) || value != expected) {
++            return false;
++        }
++    }
++    sockaddr_storage local{};
++    socklen_t size = sizeof(local);
++    if (getsockname(fd, reinterpret_cast<sockaddr *>(&local), &size) != 0) {
++        return false;
++    }
++    if (local.ss_family == AF_INET && size == sizeof(sockaddr_in) && address.protocol() == QAbstractSocket::IPv4Protocol) {
++        const auto &endpoint = reinterpret_cast<const sockaddr_in &>(local);
++        return ntohs(endpoint.sin_port) == port && ntohl(endpoint.sin_addr.s_addr) == address.toIPv4Address();
++    }
++    if (local.ss_family == AF_INET6 && size == sizeof(sockaddr_in6) && address.protocol() == QAbstractSocket::IPv6Protocol) {
++        const auto &endpoint = reinterpret_cast<const sockaddr_in6 &>(local);
++        int only = 0;
++        socklen_t length = sizeof(only);
++        const auto expected = address.toIPv6Address();
++        return endpoint.sin6_scope_id == 0 && ntohs(endpoint.sin6_port) == port
++            && std::memcmp(endpoint.sin6_addr.s6_addr, expected.c, sizeof(expected.c)) == 0
++            && getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &only, &length) == 0 && length == sizeof(only) && only == 1;
++    }
++    return false;
++}
++
++// Qt owns only a duplicate; the upstream reservation survives provider teardown.
++inline bool adoptListener(QTcpServer &server, int fd, const QHostAddress &address, quint16 port)
++{
++    if (server.isListening() || !listenerMatches(fd, address, port)) {
++        return false;
++    }
++    const int copy = fcntl(fd, F_DUPFD_CLOEXEC, 3);
++    if (copy < 0) {
++        return false;
++    }
++    server.setProxy(QNetworkProxy::NoProxy);
++    if (!server.setSocketDescriptor(copy)) {
++        server.close();
++        close(copy);
++        return false;
++    }
++    return true;
++}
++}
+diff --git a/src/InputHandler.cpp b/src/InputHandler.cpp
+index f3d9652..f419798 100644
+--- a/src/InputHandler.cpp
++++ b/src/InputHandler.cpp
+@@ -67,6 +67,7 @@ public:
+     RdpConnection *session;
+     rdpInput *input;
+     QPointF lastMousePosition;
++    bool enabled = false;
+     // Keycodes the client currently holds, so they can be released if a key-release
+     // is lost and the client re-synchronizes its keyboard state.
+     QSet<quint32> pressedKeys;
+@@ -93,10 +94,19 @@ void InputHandler::initialize(rdpInput *input)
+     input->UnicodeKeyboardEvent = inputUnicodeKeyboardEvent;
+ }
+ 
++void InputHandler::setEnabled(bool enabled)
++{
++    if (d->enabled && !enabled) {
++        synchronizeEvent(0);
++    }
++    d->enabled = enabled;
++}
++
+ bool InputHandler::synchronizeEvent(uint32_t /*flags*/)
+ {
+-    // Client is resynchronizing its keyboard state; release any keys we still
+-    // believe are held so a lost key-release does not leave a key stuck down.
++    if (!d->enabled) {
++        return true;
++    }
+     const auto stuck = d->pressedKeys;
+     d->pressedKeys.clear();
+     if (!stuck.isEmpty()) {
+@@ -111,6 +121,9 @@ bool InputHandler::synchronizeEvent(uint32_t /*flags*/)
+ 
+ bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
+ {
++    if (!d->enabled) {
++        return true;
++    }
+     QPointF position = QPointF(x, y);
+ 
+     // Track last known mouse position for wheel events from clients
+@@ -182,6 +195,9 @@ bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
+ 
+ bool InputHandler::extendedMouseEvent(uint16_t x, uint16_t y, uint16_t flags)
+ {
++    if (!d->enabled) {
++        return true;
++    }
+     if (flags & PTR_FLAGS_MOVE) {
+         return mouseEvent(x, y, PTR_FLAGS_MOVE);
+     }
+@@ -209,6 +225,9 @@ bool InputHandler::extendedMouseEvent(uint16_t x, uint16_t y, uint16_t flags)
+ 
+ bool InputHandler::keyboardEvent(uint16_t code, uint16_t flags)
+ {
++    if (!d->enabled) {
++        return true;
++    }
+     auto virtualCode = GetVirtualKeyCodeFromVirtualScanCode(flags & KBD_FLAGS_EXTENDED ? code | KBDEXT : code, 4);
+     virtualCode = flags & KBD_FLAGS_EXTENDED ? virtualCode | KBDEXT : virtualCode;
+ 
+@@ -230,6 +249,9 @@ bool InputHandler::keyboardEvent(uint16_t code, uint16_t flags)
+ 
+ bool InputHandler::unicodeKeyboardEvent(uint16_t code, uint16_t flags)
+ {
++    if (!d->enabled) {
++        return true;
++    }
+     auto text = QString(QChar::fromUcs2(code));
+     auto keysym = xkb_utf32_to_keysym(text.toUcs4().first());
+     if (!keysym) {
+diff --git a/src/InputHandler.h b/src/InputHandler.h
+index 0b139e4..7af3b18 100644
+--- a/src/InputHandler.h
++++ b/src/InputHandler.h
+@@ -35,6 +35,8 @@ public:
+      * Initialize the InputHandler. Called from within Session::initialize().
+      */
+     void initialize(rdpInput *input);
++    /** Disabling input releases held keys and suppresses subsequent remote events. */
++    void setEnabled(bool enabled);
+ 
+     /**
+      * Emitted whenever a new input event was received from the client.
+diff --git a/src/MemorySamFile.h b/src/MemorySamFile.h
+new file mode 100644
+index 0000000..d4eaa76
+--- /dev/null
++++ b/src/MemorySamFile.h
+@@ -0,0 +1,63 @@
++// SPDX-FileCopyrightText: 2026 enzUI contributors
++// SPDX-License-Identifier: MIT
++#pragma once
++
++#include <cerrno>
++#include <fcntl.h>
++#include <string>
++#include <string_view>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace EnzimOS
++{
++class MemorySamFile
++{
++public:
++    MemorySamFile() = default;
++    MemorySamFile(const MemorySamFile &) = delete;
++    MemorySamFile &operator=(const MemorySamFile &) = delete;
++    ~MemorySamFile()
++    {
++        if (m_fd >= 0) {
++            close(m_fd);
++        }
++    }
++
++    bool store(std::string_view bytes)
++    {
++        if (m_fd >= 0 || bytes.empty() || bytes.size() > 1024 * 1024) {
++            return false;
++        }
++        m_fd = memfd_create("enzimos-rdp-sam", MFD_CLOEXEC | MFD_ALLOW_SEALING);
++        if (m_fd < 0 || fchmod(m_fd, 0600) != 0) {
++            return false;
++        }
++        size_t offset = 0;
++        while (offset < bytes.size()) {
++            const ssize_t count = write(m_fd, bytes.data() + offset, bytes.size() - offset);
++            if (count < 0 && errno == EINTR) {
++                continue;
++            }
++            if (count <= 0) {
++                return false;
++            }
++            offset += static_cast<size_t>(count);
++        }
++        constexpr int seals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE;
++        if (fcntl(m_fd, F_ADD_SEALS, seals) != 0) {
++            return false;
++        }
++        m_path = "/proc/self/fd/" + std::to_string(m_fd);
++        return true;
++    }
++
++    // Retain through peer teardown: an early close could recycle this proc-fd path.
++    const std::string &path() const { return m_path; }
++
++private:
++    int m_fd = -1;
++    std::string m_path;
++};
++}
+diff --git a/src/PortalSession.cpp b/src/PortalSession.cpp
+index ac28591..f611c84 100644
+--- a/src/PortalSession.cpp
++++ b/src/PortalSession.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include <QGuiApplication>
+ #include <QQueue>
++#include <QDBusConnectionInterface>
++#include <QDBusServiceWatcher>
+ 
+ #include <KConfigGroup>
+ #include <KSharedConfig>
+@@ -50,20 +52,57 @@ const QDBusArgument &operator>>(const QDBusArgument &arg, PortalSessionStream &s
+ void PortalRequest::onStarted(QDBusPendingCallWatcher *watcher)
+ {
+     QDBusPendingReply<QDBusObjectPath> reply = *watcher;
+-    if (!reply.isError()) {
+-        QDBusConnection::sessionBus().connect(QString{}, reply.value().path(), dbusRequestInterface, dbusResponse, this, SLOT(onFinished(uint, QVariantMap)));
+-    } else {
+-        m_callback(-1, {{QStringLiteral("errorMessage"), reply.error().message()}});
+-    }
+     watcher->deleteLater();
++    if (!m_finished) {
++        if (reply.isError() || reply.value().path() != m_requestPath) {
++            complete(2, {});
++        } else {
++            m_handleConfirmed = true;
++            if (m_earlyCode) complete(*m_earlyCode, m_earlyResult);
++        }
++    }
++}
++
++PortalRequest::~PortalRequest()
++{
++    if (!m_requestPath.isEmpty()) {
++        QDBusConnection::sessionBus().disconnect(m_owner, m_requestPath, dbusRequestInterface, dbusResponse, this, SLOT(onFinished(uint, QVariantMap)));
++        if (!m_finished) closeOwnedRequest();
++    }
++}
++
++void PortalRequest::closeOwnedRequest()
++{
++    if (m_closeSent || m_requestPath.isEmpty()) return;
++    m_closeSent = true;
++    auto close = QDBusMessage::createMethodCall(m_owner, m_requestPath, dbusRequestInterface, QStringLiteral("Close"));
++    QDBusConnection::sessionBus().asyncCall(close, 2000);
+ }
+ 
+ void PortalRequest::onFinished(uint code, const QVariantMap &result)
+ {
+-    if (m_context) {
+-        m_callback(code, result);
++    if (m_finished) return;
++    if (!m_handleConfirmed) {
++        if (!m_earlyCode) {m_earlyCode = code;m_earlyResult = result;}
++        return;
++    }
++    complete(code, result);
++}
++
++void PortalRequest::complete(uint code, const QVariantMap &result)
++{
++    if (m_finished) return;
++    m_finished = true;
++    if (code != 0) closeOwnedRequest();
++    if (!m_requestPath.isEmpty()) {
++        QDBusConnection::sessionBus().disconnect(m_owner, m_requestPath, dbusRequestInterface, dbusResponse, this, SLOT(onFinished(uint, QVariantMap)));
+     }
+-    deleteLater();
++    QPointer<PortalRequest> alive(this);
++    // Completion may destroy the context and this request during the callback.
++    auto callback = m_callback;
++    auto callbackResult = result;
++    if (m_context) callback(code, callbackResult);
++    if (alive) deleteLater();
+ }
+ 
+ class KRDP_NO_EXPORT PortalSession::Private
+@@ -78,19 +117,48 @@ public:
+     QString mappingId;
+ 
+     std::unique_ptr<EiConnection> eiConnection;
++    bool protectedSharing = false;
++    bool viewOnly = true;
++    bool pipeWireReady = false;
++    bool eisReady = false;
++    bool failed = false;
++    bool initializing = false;
++    QString expectedSessionPath;
++    bool sessionClosed = false;
++    QTimer setupDeadline;
++    QString portalOwner;
++    std::unique_ptr<QDBusServiceWatcher> ownerWatcher;
+ };
+ 
+ QString createHandleToken()
+ {
+-    return QStringLiteral("krdp%1").arg(QRandomGenerator::global()->generate());
++    return QStringLiteral("krdp%1%2").arg(QRandomGenerator::system()->generate64(),16,16,QLatin1Char('0')).arg(QRandomGenerator::system()->generate64(),16,16,QLatin1Char('0'));
+ }
+ 
+ PortalSession::PortalSession()
+-    : AbstractSession()
++    : AbstractSession(false)
+     , d(std::make_unique<Private>())
+ {
+-    d->remoteInterface = std::make_unique<OrgFreedesktopPortalRemoteDesktopInterface>(dbusService, dbusPath, QDBusConnection::sessionBus());
+-    d->screencastInterface = std::make_unique<OrgFreedesktopPortalScreenCastInterface>(dbusService, dbusPath, QDBusConnection::sessionBus());
++    d->setupDeadline.setSingleShot(true);
++    connect(&d->setupDeadline, &QTimer::timeout, this, &PortalSession::fail);
++    const auto bus = QDBusConnection::sessionBus();
++    if (!bus.isConnected() || !bus.interface()) return;
++    const auto owner = bus.interface()->serviceOwner(dbusService);
++    if (!owner.isValid() || !owner.value().startsWith(QLatin1Char(':'))) {
++        return;
++    }
++    d->portalOwner = owner.value();
++    d->ownerWatcher = std::make_unique<QDBusServiceWatcher>(dbusService, bus, QDBusServiceWatcher::WatchForOwnerChange);
++    connect(d->ownerWatcher.get(), &QDBusServiceWatcher::serviceOwnerChanged, this, [this](const QString &, const QString &, const QString &owner) {
++        if (owner != d->portalOwner) fail();
++    });
++    const auto confirmedOwner = bus.interface()->serviceOwner(dbusService);
++    if (!confirmedOwner.isValid() || confirmedOwner.value() != d->portalOwner) {
++        d->portalOwner.clear();
++        return;
++    }
++    d->remoteInterface = std::make_unique<OrgFreedesktopPortalRemoteDesktopInterface>(d->portalOwner, dbusPath, bus);
++    d->screencastInterface = std::make_unique<OrgFreedesktopPortalScreenCastInterface>(d->portalOwner, dbusPath, bus);
+ 
+     if (!d->remoteInterface->isValid() || !d->screencastInterface->isValid()) {
+         qCWarning(KRDP) << "Could not connect to Freedesktop Remote Desktop Portal";
+@@ -100,75 +168,116 @@ PortalSession::PortalSession()
+ 
+ PortalSession::~PortalSession()
+ {
+-    if (d->sessionPath.path().isEmpty()) {
++    if (d->sessionPath.path().isEmpty() || d->sessionClosed) {
+         qCDebug(KRDP) << "No portal session to close (session was never created)";
+         return;
+     }
+ 
+-    auto closeMessage = QDBusMessage::createMethodCall(dbusService, d->sessionPath.path(), dbusSessionInterface, QStringLiteral("Close"));
+-    QDBusConnection::sessionBus().asyncCall(closeMessage);
++    auto closeMessage = QDBusMessage::createMethodCall(d->portalOwner, d->sessionPath.path(), dbusSessionInterface, QStringLiteral("Close"));
++    QDBusConnection::sessionBus().asyncCall(closeMessage, 2000);
+ 
+     qCDebug(KRDP) << "Closing Freedesktop Portal Session";
+ }
+ 
++void PortalSession::setProtectedSharing(bool viewOnly)
++{
++    d->protectedSharing = true;
++    d->viewOnly = viewOnly;
++    setClipboardEnabled(false);
++}
++
++void PortalSession::maybeStartStreaming()
++{
++    if (!d->failed && !isStarted() && d->pipeWireReady && ((!d->protectedSharing) || d->viewOnly || d->eisReady)) {
++        d->setupDeadline.stop();
++        setStarted(true);
++    }
++}
++
++void PortalSession::fail()
++{
++    if (d->failed) return;
++    d->failed = true;
++    d->setupDeadline.stop();
++    setStarted(false);
++    setClipboardEnabled(false);
++    setPipeWireFd(-1);
++    if (!d->sessionPath.path().isEmpty() && !d->sessionClosed) {
++        d->sessionClosed = true;
++        auto close = QDBusMessage::createMethodCall(d->portalOwner, d->sessionPath.path(), dbusSessionInterface, QStringLiteral("Close"));
++        QDBusConnection::sessionBus().asyncCall(close, 2000);
++    }
++    for (auto request : findChildren<PortalRequest *>(QString{}, Qt::FindDirectChildrenOnly)) request->deleteLater();
++    QTimer::singleShot(0, this, [this]() {d->eiConnection.reset();});
++    Q_EMIT error();
++}
++
+ void PortalSession::start()
+ {
++    if (d->portalOwner.isEmpty() || !d->remoteInterface || !d->remoteInterface->isValid()
++        || !d->screencastInterface || !d->screencastInterface->isValid()) {fail();return;}
++    if (d->failed || d->initializing || isStarted()) return;
++    d->initializing = true;
++    setClipboardEnabled(!d->protectedSharing);
+     qCDebug(KRDP) << "Initializing Freedesktop Portal Session";
+-
++    const auto sessionToken = createHandleToken();
++    auto sender = QDBusConnection::sessionBus().baseService();
++    sender.remove(0, 1);sender.replace(QLatin1Char('.'), QLatin1Char('_'));
++    d->expectedSessionPath = QStringLiteral("/org/freedesktop/portal/desktop/session/%1/%2").arg(sender, sessionToken);
+     auto parameters = QVariantMap{
+         {QStringLiteral("handle_token"), createHandleToken()},
+-        {QStringLiteral("session_handle_token"), createHandleToken()},
++        {QStringLiteral("session_handle_token"), sessionToken},
+     };
+-    new PortalRequest(d->remoteInterface->CreateSession(parameters), this, &PortalSession::onCreateSession);
++    new PortalRequest([this, parameters]() {return d->remoteInterface->CreateSession(parameters);}, this, &PortalSession::onCreateSession, d->portalOwner, parameters.value(QStringLiteral("handle_token")).toString());
+ }
+ 
+ void PortalSession::sendEvent(const std::shared_ptr<QEvent> &event)
+ {
+-    if (isStarted() && d->eiConnection) {
++    if (isStarted() && d->eiConnection && !(d->protectedSharing && d->viewOnly)) {
+         d->eiConnection->sendEvent(event, size(), d->mappingId);
+     }
+ }
+ 
+ void PortalSession::onCreateSession(uint code, const QVariantMap &result)
+ {
++    if (d->failed) return;
+     if (code != 0) {
+         qCWarning(KRDP) << "Could not open a new remote desktop session, error code" << code;
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+-    d->sessionPath = QDBusObjectPath(result.value(QStringLiteral("session_handle")).toString());
++    const auto sessionPath = result.value(QStringLiteral("session_handle")).toString();
++    if (sessionPath != d->expectedSessionPath) {fail();return;}
++    d->sessionPath = QDBusObjectPath(sessionPath);
++    if (!QDBusConnection::sessionBus().connect(d->portalOwner, sessionPath, dbusSessionInterface, QStringLiteral("Closed"), this, SLOT(onSessionClosed()))) {fail();return;}
+ 
+     static const uint PermissionsPersistUntilExplicitlyRevoked = 2;
+ 
+     auto parameters = QVariantMap{
+-        {QStringLiteral("types"), 7u},
++        {QStringLiteral("types"), d->protectedSharing ? (d->viewOnly ? 0u : 3u) : 7u},
+         {QStringLiteral("handle_token"), createHandleToken()},
+-        {QStringLiteral("persist_mode"), PermissionsPersistUntilExplicitlyRevoked},
++        {QStringLiteral("persist_mode"), d->protectedSharing ? 0u : PermissionsPersistUntilExplicitlyRevoked},
+     };
+-    // name is set explicitly as this is also used by the KCM
+-    KConfigGroup restorationGroup = KSharedConfig::openStateConfig(QStringLiteral("krdp-serverstaterc"))->group(QStringLiteral("General"));
+-    QString restoreToken = restorationGroup.readEntry(QStringLiteral("restorationToken"));
+-
+-    // this is a compatibility path for krdp < 6.3 that used a different name and in .config
+-    // in 6.4 onwards it can be killed
+-    if (restoreToken.isEmpty()) {
+-        KConfigGroup restorationGroup = KSharedConfig::openConfig(QStringLiteral("krdp-serverrc"))->group(QStringLiteral("General"));
+-        restoreToken = restorationGroup.readEntry(QStringLiteral("restorationToken"));
+-    } // end compat
+-
+-    if (!restoreToken.isEmpty()) {
+-        parameters[QStringLiteral("restore_token")] = restoreToken;
++    if (!d->protectedSharing) {
++        // The KCM shares this state-file and restoration-token contract.
++        KConfigGroup restorationGroup = KSharedConfig::openStateConfig(QStringLiteral("krdp-serverstaterc"))->group(QStringLiteral("General"));
++        QString restoreToken = restorationGroup.readEntry(QStringLiteral("restorationToken"));
++        if (restoreToken.isEmpty()) {
++            KConfigGroup legacyGroup = KSharedConfig::openConfig(QStringLiteral("krdp-serverrc"))->group(QStringLiteral("General"));
++            restoreToken = legacyGroup.readEntry(QStringLiteral("restorationToken"));
++        }
++        if (!restoreToken.isEmpty()) parameters[QStringLiteral("restore_token")] = restoreToken;
+     }
+-
+-    new PortalRequest(d->remoteInterface->SelectDevices(d->sessionPath, parameters), this, &PortalSession::onDevicesSelected);
++    new PortalRequest([this, parameters]() {return d->remoteInterface->SelectDevices(d->sessionPath, parameters);}, this, &PortalSession::onDevicesSelected, d->portalOwner, parameters.value(QStringLiteral("handle_token")).toString());
+ }
+ 
+ void PortalSession::onDevicesSelected(uint code, const QVariantMap & /*result*/)
+ {
++    if (d->failed) return;
+     if (code != 0) {
+         qCWarning(KRDP) << "Could not select devices for remote desktop session, error code" << code;
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+@@ -180,52 +289,70 @@ void PortalSession::onDevicesSelected(uint code, const QVariantMap & /*result*/)
+                       {QStringLiteral("multiple"), activeStream().has_value()}};
+     }
+     parameters[QStringLiteral("cursor_mode")] = 4u; // Metadata
++    parameters[QStringLiteral("handle_token")] = createHandleToken();
+ 
+-    new PortalRequest(d->screencastInterface->SelectSources(d->sessionPath, parameters), this, &PortalSession::onSourcesSelected);
++    new PortalRequest([this, parameters]() {return d->screencastInterface->SelectSources(d->sessionPath, parameters);}, this, &PortalSession::onSourcesSelected, d->portalOwner, parameters.value(QStringLiteral("handle_token")).toString());
+ }
+ 
+ void PortalSession::onSourcesSelected(uint code, const QVariantMap & /*result*/)
+ {
++    if (d->failed) return;
+     if (code != 0) {
+         qCWarning(KRDP) << "Could not select sources for screencast session, error code" << code;
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+     auto parameters = QVariantMap{
+         {QStringLiteral("handle_token"), createHandleToken()},
+     };
+-    new PortalRequest(d->remoteInterface->Start(d->sessionPath, QString{}, parameters), this, &PortalSession::onSessionStarted);
++    new PortalRequest([this, parameters]() {return d->remoteInterface->Start(d->sessionPath, QString{}, parameters);}, this, &PortalSession::onSessionStarted, d->portalOwner, parameters.value(QStringLiteral("handle_token")).toString());
+ }
+ 
+ void KRdp::PortalSession::onSessionStarted(uint code, const QVariantMap &result)
+ {
++    if (d->failed) return;
+     if (code != 0) {
+         qCWarning(KRDP) << "Could not start screencast session, error code" << code;
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+-    if (result.value(QStringLiteral("devices")).toUInt() == 0) {
++    const auto devicesValue = result.value(QStringLiteral("devices"));
++    const auto clipboardValue = result.value(QStringLiteral("clipboard_enabled"));
++    const uint devices = devicesValue.toUInt();
++    if (d->protectedSharing && (devicesValue.metaType().id() != QMetaType::UInt
++        || (clipboardValue.isValid() && clipboardValue.metaType().id() != QMetaType::Bool)
++        || devices != (d->viewOnly ? 0u : 3u) || clipboardValue.toBool())) {
++        qCWarning(KRDP) << "Protected sharing devices differ from the approved grant";
++        fail();
++        return;
++    }
++    if (!d->protectedSharing && devices == 0) {
+         qCWarning(KRDP) << "No devices were granted" << result;
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+-    KConfigGroup restorationGroup = KSharedConfig::openStateConfig(QStringLiteral("krdp-serverstaterc"))->group(QStringLiteral("General"));
+-    restorationGroup.writeEntry("restorationToken", result.value(QStringLiteral("restore_token")));
++    if (!d->protectedSharing) {
++        KConfigGroup restorationGroup = KSharedConfig::openStateConfig(QStringLiteral("krdp-serverstaterc"))->group(QStringLiteral("General"));
++        restorationGroup.writeEntry("restorationToken", result.value(QStringLiteral("restore_token")));
++    }
+ 
+     const auto streams = qdbus_cast<QList<PortalSessionStream>>(result.value(QStringLiteral("streams")));
+     if (streams.isEmpty()) {
+         qCWarning(KRDP) << "No screencast streams supplied";
+-        Q_EMIT error();
++        fail();
+         return;
+     }
+ 
+-    auto watcher = new QDBusPendingCallWatcher(d->screencastInterface->OpenPipeWireRemote(d->sessionPath, QVariantMap{}));
++    d->setupDeadline.start(15000);
++    auto watcher = new QDBusPendingCallWatcher(d->screencastInterface->OpenPipeWireRemote(d->sessionPath, QVariantMap{}), this);
+     connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, streams](QDBusPendingCallWatcher *watcher) {
++        watcher->deleteLater();
++        if (d->failed) return;
+         auto reply = QDBusReply<QDBusUnixFileDescriptor>(*watcher);
+-        if (reply.isValid()) {
++        if (reply.isValid() && reply.value().isValid()) {
+             auto streamIndex = activeStream().value_or(0);
+             if (streamIndex < 0 || streamIndex >= streams.size()) {
+                 qCWarning(KRDP) << "Requested monitor index out of range, using first monitor";
+@@ -240,28 +367,25 @@ void KRdp::PortalSession::onSessionStarted(uint code, const QVariantMap &result)
+             auto fd = reply.value();
+             setNodeId(stream.nodeId);
+             setPipeWireFd(fd.takeFileDescriptor());
+-            QDBusConnection::sessionBus().connect(u"org.freedesktop.portal.Desktop"_s,
+-                                                  d->sessionPath.path(),
+-                                                  u"org.freedesktop.portal.Session"_s,
+-                                                  u"Closed"_s,
+-                                                  this,
+-                                                  SLOT(onSessionClosed()));
+             qCDebug(KRDP) << "Started Freedesktop Portal session";
+-            setStarted(true);
++            d->pipeWireReady = true;
++            maybeStartStreaming();
+         } else {
+             qCWarning(KRDP) << "Could not open pipewire remote";
+-            Q_EMIT error();
++            fail();
+         }
+-        watcher->deleteLater();
+     });
+ 
+-    connectToEis();
++    if (!(d->protectedSharing && d->viewOnly)) {
++        connectToEis();
++    }
+ }
+ 
+ void PortalSession::onSessionClosed()
+ {
+     qCWarning(KRDP) << "Portal session was closed!";
+-    Q_EMIT error();
++    d->sessionClosed = true;
++    fail();
+ }
+ 
+ void PortalSession::connectToEis()
+@@ -269,20 +393,24 @@ void PortalSession::connectToEis()
+     auto watcher = new QDBusPendingCallWatcher(d->remoteInterface->ConnectToEIS(d->sessionPath, QVariantMap{}), this);
+     connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *watcher) {
+         watcher->deleteLater();
+-
++        if (d->failed) return;
+         const QDBusPendingReply<QDBusUnixFileDescriptor> reply = *watcher;
+-        if (reply.isError()) {
++        if (reply.isError() || !reply.value().isValid()) {
+             qCWarning(KRDP) << "Could not connect portal session to EIS:" << reply.error().message();
+-            Q_EMIT error();
++            fail();
+             return;
+         }
+ 
+         d->eiConnection = std::make_unique<EiConnection>(reply.value().takeFileDescriptor(), this);
+         if (!d->eiConnection->isValid()) {
+-            Q_EMIT error();
++            fail();
+             return;
+         }
+-        connect(d->eiConnection.get(), &EiConnection::error, this, &PortalSession::error);
++        connect(d->eiConnection.get(), &EiConnection::error, this, &PortalSession::fail);
++        connect(d->eiConnection.get(), &EiConnection::connected, this, [this]() {
++            d->eisReady = true;
++            maybeStartStreaming();
++        });
+     });
+ }
+ }
+diff --git a/src/PortalSession.h b/src/PortalSession.h
+index 0fdddd1..facb0e7 100644
+--- a/src/PortalSession.h
++++ b/src/PortalSession.h
+@@ -38,6 +38,8 @@ public:
+     ~PortalSession() override;
+ 
+     void start() override;
++    /** Protected grants are nonpersistent; view-only grants never connect input. */
++    void setProtectedSharing(bool viewOnly);
+     /**
+      * Send a new event to the portal.
+      *
+@@ -47,6 +49,8 @@ public:
+ 
+ private:
+     void connectToEis();
++    void maybeStartStreaming();
++    void fail();
+ 
+     void onCreateSession(uint code, const QVariantMap &result);
+     void onDevicesSelected(uint code, const QVariantMap &result);
+diff --git a/src/PortalSession_p.h b/src/PortalSession_p.h
+index efa90cc..aa26247 100644
+--- a/src/PortalSession_p.h
++++ b/src/PortalSession_p.h
+@@ -10,29 +10,30 @@
+ #include <type_traits>
+ 
+ #include <QDBusPendingCallWatcher>
++#include <QDBusConnection>
++#include <QDBusMessage>
++#include <QRandomGenerator>
+ #include <QObject>
+ #include <QPoint>
+ #include <QPointer>
++#include <QTimer>
+ 
+ #include "krdp_export.h"
+ 
+ namespace KRdp
+ {
+ 
+-/**
+- * Convenience class to help with making requests to the Desktop portal less cumbersome to work with.
+- *
+- * A request to the portal requires first calling a method on the portal, which
+- * will return an object path that should be listened to for a signal. The
+- * signal provides the actual proper data for the original method call.
+- */
++// Portal handles are predictable from the caller and token, so response matching
++// must be installed before the call can emit a completion signal.
+ class PortalRequest : public QObject
+ {
+     Q_OBJECT
+ public:
+     template<typename ContextType, typename Callback>
+-    PortalRequest(const QDBusPendingCall &call, ContextType *context, Callback callback)
+-        : m_context(context)
++    PortalRequest(std::function<QDBusPendingCall()> invoke, ContextType *context, Callback callback, QString owner, const QString &token)
++        : QObject(context)
++        , m_context(context)
++        , m_owner(std::move(owner))
+     {
+         if constexpr (std::is_member_function_pointer<Callback>::value) {
+             m_callback = std::bind(callback, context, std::placeholders::_1, std::placeholders::_2);
+@@ -40,19 +41,37 @@ public:
+             m_callback = callback;
+         }
+ 
+-        auto watcher = new QDBusPendingCallWatcher(call);
+-        // We need to wait here because otherwise we risk the signal arriving
+-        // before we know what path to listen on.
+-        watcher->waitForFinished();
+-        onStarted(watcher);
++        auto sender = QDBusConnection::sessionBus().baseService();
++        sender.remove(0, 1);sender.replace(QLatin1Char('.'), QLatin1Char('_'));
++        m_requestPath = QStringLiteral("/org/freedesktop/portal/desktop/request/%1/%2").arg(sender, token);
++        if (!QDBusConnection::sessionBus().connect(m_owner, m_requestPath, QStringLiteral("org.freedesktop.portal.Request"), QStringLiteral("Response"), this, SLOT(onFinished(uint, QVariantMap)))) {
++            QTimer::singleShot(0, this, [this]() {complete(2, {});});
++            return;
++        }
++        auto timer = new QTimer(this);
++        timer->setSingleShot(true);
++        connect(timer, &QTimer::timeout, this, [this]() {complete(2, {});});
++        timer->start(15000);
++        auto watcher = new QDBusPendingCallWatcher(invoke(), this);
++        connect(watcher, &QDBusPendingCallWatcher::finished, this, &PortalRequest::onStarted);
+     }
++    ~PortalRequest() override;
+ 
+ private:
+     void onStarted(QDBusPendingCallWatcher *watcher);
+     Q_SLOT void onFinished(uint code, const QVariantMap &result);
++    void complete(uint code, const QVariantMap &result);
++    void closeOwnedRequest();
+ 
+     QPointer<QObject> m_context;
+     std::function<void(uint, const QVariantMap &)> m_callback;
++    QString m_owner;
++    QString m_requestPath;
++    bool m_finished = false;
++    bool m_closeSent = false;
++    bool m_handleConfirmed = false;
++    std::optional<uint> m_earlyCode;
++    QVariantMap m_earlyResult;
+ };
+ 
+ struct PortalSessionStream {
+diff --git a/src/RdpConnection.cpp b/src/RdpConnection.cpp
+index 0418257..aac560c 100644
+--- a/src/RdpConnection.cpp
++++ b/src/RdpConnection.cpp
+@@ -8,17 +8,19 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include "RdpConnection.h"
++#include "MemorySamFile.h"
+ 
+-#include <filesystem>
++#include <algorithm>
++#include <atomic>
++#include <chrono>
+ #include <optional>
+ 
+ #include <fcntl.h>
+ 
+ #include <QHostAddress>
+-#include <QStandardPaths>
+ #include <QTcpSocket>
+-#include <QTemporaryFile>
+ #include <QThread>
++#include <QScopeGuard>
+ 
+ #include <freerdp/channels/wtsvc.h>
+ #include <freerdp/freerdp.h>
+@@ -40,37 +42,21 @@
+ 
+ #include "krdp_logging.h"
+ 
+-namespace fs = std::filesystem;
+-
+ namespace KRdp
+ {
+ 
+-/**
+- * Create the "sam" file used by FreeRDP for reading username and password
+- * information. It hashes the password in the appropriate format and writes that
+- * along with the username to the provided temporary file.
+- */
+-static bool createSamFile(QTemporaryFile &file, const QList<User> &users)
++static bool createSamFile(EnzimOS::MemorySamFile &file, const QList<User> &users)
+ {
+-    auto runtimePath = fs::path(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation).toStdString());
+-
+-    auto path = runtimePath / "krdp";
+-    fs::create_directories(path);
+-
+-    file.setFileTemplate(QString::fromStdString(path / "rdp-sam-XXXXXX"));
+-    if (!file.open()) {
+-        qCWarning(KRDP) << "Could not open SAM file";
+-        return false;
+-    }
+-
+     QString data;
+ 
+     for (const auto &user : users) {
+         auto username = user.name;
+         auto password = user.password.toUtf8();
+ 
+-        std::array<uint8_t, 16> hash;
+-        NTOWFv1A((LPSTR)password.data(), password.size(), hash.data());
++        std::array<uint8_t, 16> hash{};
++        if (!NTOWFv1A((LPSTR)password.data(), password.size(), hash.data())) {
++            return false;
++        }
+ 
+         auto entry = QStringLiteral("%1:::").arg(username);
+         for (int i = 0; i < 16; ++i) {
+@@ -80,10 +66,8 @@ static bool createSamFile(QTemporaryFile &file, const QList<User> &users)
+         data.append(entry);
+     }
+ 
+-    file.write(data.toUtf8());
+-    file.close();
+-
+-    return true;
++    const auto encoded = data.toUtf8();
++    return file.store(std::string_view(encoded.constData(), static_cast<size_t>(encoded.size())));
+ }
+ 
+ #include <security/pam_appl.h>
+@@ -242,10 +226,13 @@ class KRDP_NO_EXPORT RdpConnection::Private
+ public:
+     Server *server = nullptr;
+ 
+-    State state = State::Initial;
++    std::atomic<State> state{State::Initial};
++    std::atomic<bool> activated{false};
++    bool transportCloseAttempted = false;
+     bool qualitySeeded = false;
+ 
+     qintptr socketHandle;
++    bool initializationStarted = false;
+ 
+     std::unique_ptr<InputHandler> inputHandler;
+     std::unique_ptr<VideoStream> videoStream;
+@@ -273,7 +260,7 @@ public:
+         }
+     }
+ 
+-    QTemporaryFile samFile;
++    EnzimOS::MemorySamFile samFile;
+ };
+ 
+ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
+@@ -301,6 +288,10 @@ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
+ 
+ RdpConnection::~RdpConnection()
+ {
++    if (!d->initializationStarted) {
++        ::close(d->socketHandle);
++        d->socketHandle = -1;
++    }
+     // The run thread owns the peer transport and closes it as it exits, so just
+     // wake it (stopEvent) and join before we free. Closing the peer here, while
+     // the run thread still reads the same transport, races inside FreeRDP and
+@@ -308,9 +299,10 @@ RdpConnection::~RdpConnection()
+     if (d->thread.joinable()) {
+         d->requestStop();
+         d->thread.join();
+-    } else if (d->peer && d->state != State::Closed) {
++    } else if (d->peer && d->peer->context && !d->transportCloseAttempted) {
+         // The run thread was never started (peer set up but initialize failed):
+         // nothing else touches the peer, so close it here before freeing.
++        d->transportCloseAttempted = true;
+         d->peer->Close(d->peer);
+     }
+ 
+@@ -333,11 +325,9 @@ RdpConnection::State RdpConnection::state() const
+ 
+ void RdpConnection::setState(KRdp::RdpConnection::State newState)
+ {
+-    if (newState == d->state) {
++    if (d->state.exchange(newState) == newState) {
+         return;
+     }
+-
+-    d->state = newState;
+     Q_EMIT stateChanged(newState);
+ }
+ 
+@@ -394,11 +384,17 @@ NetworkDetection *RdpConnection::networkDetection() const
+ 
+ void RdpConnection::initialize()
+ {
++    d->initializationStarted = true;
++    const auto terminal = qScopeGuard([this] {
++        if (!d->thread.joinable()) setState(State::Closed);
++    });
+     setState(State::Starting);
+ 
+     d->peer = freerdp_peer_new(d->socketHandle);
+     if (!d->peer) {
+         qCWarning(KRDP) << "Failed to create peer";
++        ::close(d->socketHandle);
++        d->socketHandle = -1;
+         return;
+     }
+ 
+@@ -427,7 +423,7 @@ void RdpConnection::initialize()
+             return;
+         }
+ 
+-        if (!freerdp_settings_set_string(settings, FreeRDP_NtlmSamFile, d->samFile.fileName().toUtf8().constData())) {
++        if (!freerdp_settings_set_string(settings, FreeRDP_NtlmSamFile, d->samFile.path().c_str())) {
+             qFatal("Failed to set SAM database");
+             return;
+         }
+@@ -526,7 +522,10 @@ void RdpConnection::run(std::stop_token stopToken)
+     bool lastDrdynvcJoined = false;
+     setState(State::Running);
+ 
++    const bool protectedPeer = d->server->protectedSharing();
++    const auto activationDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+     while (!stopToken.stop_requested()) {
++        if (protectedPeer && !d->activated.load() && std::chrono::steady_clock::now() >= activationDeadline) break;
+         // events[0] = virtual channel manager, events[1] = stopEvent (signalled
+         // for teardown), the rest = peer transport handles.
+         std::array<HANDLE, 33> events{channelEvent, d->stopEvent};
+@@ -536,7 +535,7 @@ void RdpConnection::run(std::stop_token stopToken)
+             break;
+         }
+         // Wait for something to happen on the connection.
+-        WaitForMultipleObjects(2 + handleCount, events.data(), FALSE, INFINITE);
++        WaitForMultipleObjects(2 + handleCount, events.data(), FALSE, protectedPeer && !d->activated.load() ? 250 : INFINITE);
+ 
+         // Bail out before touching the peer transport if we were asked to stop,
+         // so teardown stays race-free.
+@@ -566,7 +565,7 @@ void RdpConnection::run(std::stop_token stopToken)
+             break;
+         }
+ 
+-        if (d->peer->connected && d->state == State::Activated && cliprdrJoined) {
++        if (d->peer->connected && d->state == State::Activated && cliprdrJoined && !d->server->protectedSharing()) {
+             if (!d->clipboard->initialize()) {
+                 break;
+             }
+@@ -606,6 +605,7 @@ void RdpConnection::run(std::stop_token stopToken)
+     // just asks this thread to stop, so once a run thread exists this is the
+     // only place the transport is driven - keeping teardown single-threaded.
+     if (d->peer) {
++        d->transportCloseAttempted = true;
+         d->peer->Close(d->peer);
+     }
+ 
+@@ -656,6 +656,7 @@ static std::optional<quint8> qualitySeedForConnectionType(uint32_t connectionTyp
+ 
+ bool RdpConnection::onActivate()
+ {
++    d->activated.store(true);
+     setState(State::Activated);
+ 
+     if (!d->qualitySeeded) {
+@@ -678,8 +679,6 @@ bool RdpConnection::onPostConnect()
+ {
+     qCInfo(KRDP) << "New client connected:" << d->peer->hostname << freerdp_peer_os_major_type_string(d->peer) << freerdp_peer_os_minor_type_string(d->peer);
+ 
+-    d->samFile.remove();
+-
+     rdpSettings *settings = d->peer->context->settings;
+     const QString username = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Username));
+ 
+@@ -708,7 +707,16 @@ bool RdpConnection::onPostConnect()
+         }
+         return false;
+     } else {
+-        // In the NLA case the user has been authorised against the SAM database
++        const auto users = d->server->users();
++        const auto user = std::find_if(users.cbegin(), users.cend(), [&username](const User &entry) {
++            return entry.name == username;
++        });
++        if (user == users.cend()) {
++            return false;
++        }
++        QMetaObject::invokeMethod(d->inputHandler.get(), [handler = d->inputHandler.get(), enabled = !user->readOnly]() {
++            handler->setEnabled(enabled);
++        }, Qt::BlockingQueuedConnection);
+         return true;
+     }
+ }
+diff --git a/src/Server.cpp b/src/Server.cpp
+index 4ccb3ba..96515d5 100644
+--- a/src/Server.cpp
++++ b/src/Server.cpp
+@@ -13,6 +13,7 @@
+ #include <winpr/ssl.h>
+ 
+ #include "RdpConnection.h"
++#include "InheritedListener.h"
+ 
+ #include "krdp_logging.h"
+ 
+@@ -26,6 +27,12 @@ public:
+ 
+     QHostAddress address = QHostAddress::LocalHost;
+     quint16 port = 3389;
++    int reservedListener = -1;
++    bool inheritedOnly = false;
++    bool protectedSharing = false;
++    bool startAttempted = false;
++    bool stopping = false;
++    bool viewOnly = true;
+ 
+     QList<User> users;
+     bool usePamAuthentication = false;
+@@ -45,39 +52,78 @@ Server::Server(QObject *parent)
+ Server::~Server()
+ {
+     stop();
++    if (d->reservedListener >= 0) {
++        ::close(d->reservedListener);
++    }
++}
++
++bool Server::setReservedListener(int fd)
++{
++    d->inheritedOnly = true;
++    if (isListening() || d->reservedListener >= 0 || !EnzimOS::listenerMatches(fd, d->address, d->port)) {
++        return false;
++    }
++    d->reservedListener = fcntl(fd, F_DUPFD_CLOEXEC, 3);
++    return d->reservedListener >= 0;
++}
++
++void Server::setProtectedSharing(bool viewOnly)
++{
++    d->protectedSharing = true;
++    d->viewOnly = viewOnly;
++}
++
++bool Server::protectedSharing() const
++{
++    return d->protectedSharing;
++}
++
++bool Server::viewOnly() const
++{
++    return d->viewOnly;
+ }
+ 
+ bool Server::start()
+ {
++    if (d->stopping || isListening() || (d->protectedSharing && (d->startAttempted || !d->inheritedOnly))) return false;
++    d->startAttempted = true;
+     if (!std::filesystem::exists(d->tlsCertificate) || !std::filesystem::exists(d->tlsCertificateKey)) {
+         qCCritical(KRDP).nospace() << "A valid TLS certificate (" << QString::fromStdString(d->tlsCertificate.filename().string()) << ") and key ("
+                                    << QString::fromStdString(d->tlsCertificateKey.filename().string()) << ") is required for the server to run!";
+         return false;
+     }
+ 
+-    if (!listen(d->address, d->port)) {
+-        // NOTE: We cannot use QTcpServer methods to get the server address and port because it won't initialize them if listen fails.
++    // Peer contexts clone this template; no listener is admitted without it.
++    d->settings = freerdp_settings_new(FREERDP_SETTINGS_SERVER_MODE);
++    if (!d->settings) return false;
++    const bool listening = d->inheritedOnly
++        ? EnzimOS::adoptListener(*this, d->reservedListener, d->address, d->port)
++        : listen(d->address, d->port);
++    if (!listening) {
+         qCCritical(KRDP) << "Unable to listen for connections on" << d->address << d->port;
++        freerdp_settings_free(d->settings);
++        d->settings = nullptr;
+         return false;
+     }
+ 
+-    // FreeRDP3 tries to use a global instance of the settings object when
+-    // initializing a new peer. However, it seems to fail at actually creating a
+-    // global default instance. So create one here and use that.
+-    d->settings = freerdp_settings_new(FREERDP_SETTINGS_SERVER_MODE);
+-
+     qCDebug(KRDP) << "Listening for connections on" << serverAddress() << serverPort();
+     return true;
+ }
+ 
+ void Server::stop()
+ {
++    d->stopping = true;
+     close();
++    // Peer destruction can re-enter Qt; detach every peer before joining any.
++    auto sessions = std::move(d->sessions);
++    d->sessions.clear();
++    sessions.clear();
+ 
+     if (d->settings) {
+         freerdp_settings_free(d->settings);
+         d->settings = nullptr;
+     }
++    d->stopping = false;
+ }
+ 
+ QHostAddress Server::address() const
+@@ -163,6 +209,10 @@ void Server::setTlsCertificateKey(const std::filesystem::path &newTlsCertificate
+ 
+ void Server::incomingConnection(qintptr handle)
+ {
++    if (d->stopping || (d->protectedSharing && d->sessions.size() >= 4)) {
++        ::close(handle);
++        return;
++    }
+     auto session = std::make_unique<RdpConnection>(this, handle);
+     auto sessionPtr = session.get();
+     // queued: signal comes from the run thread, and it keeps the erase below from destroying the sender mid-emission
+diff --git a/src/Server.h b/src/Server.h
+index 5fcd298..116e9b3 100644
+--- a/src/Server.h
++++ b/src/Server.h
+@@ -49,6 +49,12 @@ public:
+      * changing them after the server has started listening has no effect.
+      */
+     bool start();
++    /** Borrows a validated reserved listener; start refuses rather than binding on failure. */
++    bool setReservedListener(int fd);
++    /** Protected sharing forbids persistent portal and clipboard authority. */
++    void setProtectedSharing(bool viewOnly);
++    bool protectedSharing() const;
++    bool viewOnly() const;
+     /**
+      * Stop listening for incoming connections.
+      */

@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.enzimos.Remote1
+Exec=/usr/lib/enzimos-remote/remote-service
+User=root
+SystemdService=enzimos-remote-access.service

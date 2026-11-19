@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Only the Root-managed sharing unit needs inactive-session firewall metadata.
+// Policy changes still require the ordinary firewalld configuration authority.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.fedoraproject.FirewallD1.config.info" ||
+        subject.no_new_privileges !== true || typeof subject.system_unit !== "string") {
+        return;
+    }
+    var unit = subject.system_unit.match(/^enzimos-desktop-sharing@([1-9][0-9]{3,9})\.service$/);
+    if (unit && Number(unit[1]) >= 1000 && Number(unit[1]) < 4294967295) {
+        return polkit.Result.YES;
+    }
+});

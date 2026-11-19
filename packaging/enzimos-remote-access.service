@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=enzimOS remote access configuration
+After=dbus.service polkit.service
+Requires=dbus.service polkit.service
+[Service]
+Type=dbus
+BusName=org.enzimos.Remote1
+ExecStart=/usr/lib/enzimos-remote/remote-service
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+LimitCORE=0
+MemoryMax=128M
+TasksMax=32
+TimeoutStartSec=30
+TimeoutStopSec=10
+Restart=no

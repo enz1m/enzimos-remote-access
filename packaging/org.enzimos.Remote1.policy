@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>enzimOS</vendor>
+  <action id="org.enzimos.remote.configure">
+    <description>Configure remote access</description>
+    <description xml:lang="es">Configurar acceso remoto</description>
+    <message>Administrator authentication is required to change SSH sharing or disconnect its remote sessions.</message>
+    <message xml:lang="es">Se requiere autenticación de administrador para cambiar el acceso SSH o desconectar sus sesiones remotas.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+  <action id="org.enzimos.remote.desktop">
+    <description>Control encrypted desktop sharing</description>
+    <description xml:lang="es">Controlar el escritorio compartido cifrado</description>
+    <message>Administrator authentication is required to share your desktop or stop its remote connections.</message>
+    <message xml:lang="es">Se requiere autenticación de administrador para compartir el escritorio o detener sus conexiones remotas.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+</policyconfig>
