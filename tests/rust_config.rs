@@ -71,6 +71,11 @@ fn authentication_configuration_rejects_injection_and_network_widening() {
     }
     assert!(rendered.contains("admin@2001:db8::/64"));
     assert!(config::ssh(&multiple, "admin", &addresses).is_err());
+    multiple["enabled"] = json!(false);
+    let stopped = config::ssh(&multiple, "admin", &BTreeSet::new()).unwrap();
+    assert_eq!(stopped["listen_addresses"], multiple["listen_addresses"]);
+    assert_eq!(stopped["allowed_networks"], multiple["allowed_networks"]);
+    multiple["enabled"] = json!(true);
     for selected in [
         json!([]),
         json!(["192.168.10.5", "192.168.10.5"]),

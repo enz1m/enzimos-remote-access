@@ -8,14 +8,19 @@ use std::net::IpAddr;
 use std::path::Path;
 
 fn address(v: &Value, addresses: &BTreeSet<IpAddr>) -> Result<IpAddr> {
-    let s = v
+    let ip = explicit_address(v)?;
+    require(addresses.contains(&ip), "listen-address-unavailable")?;
+    Ok(ip)
+}
+fn explicit_address(v: &Value) -> Result<IpAddr> {
+    let ip = v
         .as_str()
-        .ok_or_else(|| Error("listen-address-unavailable".into()))?;
-    let ip: IpAddr = s
-        .parse()
+        .filter(|v| v.len() <= 64)
+        .ok_or_else(|| Error("listen-address-unavailable".into()))?
+        .parse::<IpAddr>()
         .map_err(|_| Error("listen-address-unavailable".into()))?;
     require(
-        !ip.is_unspecified() && !ip.is_multicast() && addresses.contains(&ip),
+        !ip.is_unspecified() && !ip.is_multicast(),
         "listen-address-unavailable",
     )?;
     Ok(ip)
@@ -25,20 +30,7 @@ fn address(v: &Value, addresses: &BTreeSet<IpAddr>) -> Result<IpAddr> {
 /// # Errors
 /// Refuses wildcard, multicast, duplicate or missing primary addresses and sets over eight.
 pub fn listen_addresses(primary: &Value, selected: Option<&Value>) -> Result<Vec<IpAddr>> {
-    let parse = |v: &Value| -> Result<IpAddr> {
-        let ip = v
-            .as_str()
-            .filter(|v| v.len() <= 64)
-            .ok_or_else(|| Error("listen-address-unavailable".into()))?
-            .parse::<IpAddr>()
-            .map_err(|_| Error("listen-address-unavailable".into()))?;
-        require(
-            !ip.is_unspecified() && !ip.is_multicast(),
-            "listen-address-unavailable",
-        )?;
-        Ok(ip)
-    };
-    let primary = parse(primary)?;
+    let primary = explicit_address(primary)?;
     let Some(selected) = selected else {
         return Ok(vec![primary]);
     };
@@ -48,7 +40,10 @@ pub fn listen_addresses(primary: &Value, selected: Option<&Value>) -> Result<Vec
         .ok_or_else(|| Error("listen-address-bound".into()))?;
     let mut addresses = BTreeSet::new();
     for row in rows {
-        require(addresses.insert(parse(row)?), "listen-address-duplicate")?;
+        require(
+            addresses.insert(explicit_address(row)?),
+            "listen-address-duplicate",
+        )?;
     }
     require(addresses.contains(&primary), "listen-address-unavailable")?;
     Ok(addresses.into_iter().collect())
@@ -144,12 +139,16 @@ pub fn ssh(v: &Value, account: &str, addresses: &BTreeSet<IpAddr>) -> Result<Val
     }
     integer(&v["port"], 22, 65535, "ssh-listen-port")?;
     let selected = listen_addresses(&v["listen_address"], v.get("listen_addresses"))?;
-    require(
-        selected.iter().all(|ip| addresses.contains(ip)),
-        "listen-address-unavailable",
-    )?;
+    // Stopping a listener must work even after its interface disappears.
+    if v["enabled"] == true {
+        require(
+            selected.iter().all(|ip| addresses.contains(ip)),
+            "listen-address-unavailable",
+        )?;
+    }
     let mut result = v.clone();
-    result["listen_address"] = value!(address(&v["listen_address"], addresses)?.to_string());
+    let primary = explicit_address(&v["listen_address"])?;
+    result["listen_address"] = value!(primary.to_string());
     if v.get("listen_addresses").is_some() {
         result["listen_addresses"] =
             value!(selected.iter().map(ToString::to_string).collect::<Vec<_>>());

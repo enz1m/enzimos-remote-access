@@ -17,7 +17,6 @@ use enzimos_platform::{Error, Result, accounts, files, json, require};
 use serde_json::{Value, json as value};
 use std::{
     collections::BTreeSet,
-    net::IpAddr,
     path::Path,
     time::{Duration, Instant},
 };
@@ -127,33 +126,37 @@ impl ReviewedProvider for Ssh {
         root_context()?;
         require((1000..u32::MAX).contains(&uid), "ordinary-account-required")?;
         let account = accounts::lookup_uid(uid)?;
-        let addresses = network::interfaces()?;
+        let enabled = request["enabled"].as_bool() != Some(false);
+        let addresses = if enabled {
+            network::interfaces()?
+        } else {
+            Default::default()
+        };
         let configuration = config::ssh(
             request,
             &account.name,
             &addresses.keys().copied().collect::<BTreeSet<_>>(),
         )?;
-        let address = configuration["listen_address"]
-            .as_str()
-            .unwrap()
-            .parse::<IpAddr>()
-            .map_err(|_| Error("listen-address-unavailable".into()))?;
-        let interface = addresses
-            .get(&address)
-            .ok_or_else(|| Error("listen-address-unavailable".into()))?;
-        let zone = self.runtime.block_on(self.firewall.zone_for(interface))?;
         let mut interfaces = Vec::new();
         let mut zones = Vec::new();
-        for address in config::listen_addresses(
-            &configuration["listen_address"],
-            configuration.get("listen_addresses"),
-        )? {
-            let interface = addresses
-                .get(&address)
-                .ok_or_else(|| Error("listen-address-unavailable".into()))?;
-            interfaces.push(interface.clone());
-            zones.push(self.runtime.block_on(self.firewall.zone_for(interface))?);
+        let mut primary = None;
+        if enabled {
+            for address in config::listen_addresses(
+                &configuration["listen_address"],
+                configuration.get("listen_addresses"),
+            )? {
+                let interface = addresses
+                    .get(&address)
+                    .ok_or_else(|| Error("listen-address-unavailable".into()))?;
+                let zone = self.runtime.block_on(self.firewall.zone_for(interface))?;
+                if address.to_string() == configuration["listen_address"] {
+                    primary = Some((interface.clone(), zone.clone()));
+                }
+                interfaces.push(interface.clone());
+                zones.push(zone);
+            }
         }
+        let (interface, zone) = primary.unzip();
         let key_only = configuration.get("allow_password").and_then(Value::as_bool) != Some(true);
         let plan = value!({"schema":1,"configuration":configuration,"uid":uid,"interface":interface,"zone":zone,"previous_state_sha256":json::fingerprint(&value!(self.state.load()?))?,"interfaces":interfaces,"zones":zones,"key_only":key_only,"root_login":false,"existing_sessions_disconnected":false,"stock_sshd_changed":false,"private_host_identity":true});
         Ok(value!({"plan_sha256":json::fingerprint(&plan)?,"plan":plan}))
