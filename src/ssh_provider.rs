@@ -316,6 +316,9 @@ impl Provider for Ssh {
         Ok(true)
     }
 }
+// Stays within the unit's TimeoutStartSec (enzimos-sshd.service).
+const APPROVED_ADDRESS_WAIT: Duration = Duration::from_secs(60);
+
 /// Unit startup checks published bytes again, independently of API preparation.
 pub async fn entry(operation: &str, connection: Connection) -> Result<()> {
     root_context()?;
@@ -358,7 +361,24 @@ pub async fn entry(operation: &str, connection: Connection) -> Result<()> {
             .map(|r| r["key"].clone())
             .collect::<Vec<_>>()
     );
-    let addresses = network::interfaces()?;
+    // At startup the approved network often connects after this unit starts;
+    // the listener still binds only the approved addresses.
+    let approved_addresses = config::listen_addresses(
+        &normalized["listen_address"],
+        normalized.get("listen_addresses"),
+    )?;
+    let deadline = Instant::now() + APPROVED_ADDRESS_WAIT;
+    let addresses = loop {
+        let addresses = network::interfaces()?;
+        if approved_addresses
+            .iter()
+            .all(|address| addresses.contains_key(address))
+            || Instant::now() >= deadline
+        {
+            break addresses;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    };
     let configuration = config::ssh(
         &request,
         &account.name,
