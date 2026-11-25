@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/firewalld/policies/enzimosRemote.xml
+
+[Action]
+Description = Loading the enzimOS remote-access firewall policy...
+When = PostTransaction
+# A reload drops the runtime rules of listeners that are already running, so it runs only
+# while firewalld lacks the policy.
+Exec = /bin/sh -c 'systemctl is-active --quiet firewalld.service || exit 0; firewall-cmd --info-policy=enzimosRemote >/dev/null 2>&1 && exit 0; timeout 60 firewall-cmd --reload >/dev/null || echo "firewall-cmd --reload failed; remote access needs a firewalld reload" >&2'
