@@ -13,12 +13,14 @@ use std::sync::{
 use tokio::{sync::mpsc, task::JoinHandle};
 use zbus::{Connection, MatchRule, Message, MessageStream, message::Type};
 const FIREWALLD: &str = "org.fedoraproject.FirewallD1";
+const NETWORK_MANAGER: &str = "org.freedesktop.NetworkManager";
 enum Kind {
     Changed,
     Removed(String),
     Owners {
         login: Option<String>,
         firewall: Option<String>,
+        network: bool,
     },
 }
 enum Event {
@@ -94,18 +96,32 @@ impl Watch {
             .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
         Self::spawn(connection, rules).await
     }
-    /// Watches only firewalld, for a guard that keeps a listener's firewall lease.
+    /// Watches firewalld and NetworkManager, for a guard that keeps a listener's
+    /// firewall lease on its reviewed network.
     ///
-    /// Reports a change when firewalld starts, stops, restarts or signals.
+    /// Reports a change when either starts, stops or restarts, when firewalld
+    /// signals, and when NetworkManager reports a device, address or active
+    /// connection change.
     ///
     /// # Errors
     /// Fails when the bus cannot be observed.
-    pub async fn firewall(connection: &Connection) -> Result<Self> {
+    pub async fn lease(connection: &Connection) -> Result<Self> {
         let firewall = Pinned::if_running(connection.clone(), FIREWALLD).await?;
-        let rules = firewall_rules(None, firewall.as_ref().map(Pinned::owner))
+        let network = Pinned::if_running(connection.clone(), NETWORK_MANAGER).await?;
+        let mut rules = firewall_rules(None, firewall.as_ref().map(Pinned::owner), true)
             .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
+        if let Some(network) = &network {
+            rules.extend(
+                network_rules(network.owner())
+                    .map_err(|_| Error("desktop-watch-authority-invalid".into()))?,
+            );
+        }
         let watch = Self::spawn(connection, rules).await?;
         watch.settle_firewall(connection, firewall.as_ref()).await?;
+        let current = Pinned::if_running(connection.clone(), NETWORK_MANAGER).await?;
+        if current.as_ref().map(Pinned::owner) != network.as_ref().map(Pinned::owner) {
+            watch.state.changed(&Event::Changed);
+        }
         Ok(watch)
     }
     // An owner change between the first read and the subscription has no event of its own.
@@ -203,7 +219,11 @@ fn classify(message: &Message, kind: &Kind) -> Result<Option<Event>> {
                 .map_err(|_| Error("desktop-session-event-invalid".into()))?;
             Ok((removed == *id).then_some(Event::Lost))
         }
-        Kind::Owners { login, firewall } => {
+        Kind::Owners {
+            login,
+            firewall,
+            network,
+        } => {
             let (name, _, new): (String, String, String) = message
                 .body()
                 .deserialize()
@@ -215,6 +235,7 @@ fn classify(message: &Message, kind: &Kind) -> Result<Option<Event>> {
                 FIREWALLD => {
                     (new != firewall.as_deref().unwrap_or_default()).then_some(Event::FirewallMoved)
                 }
+                NETWORK_MANAGER => network.then_some(Event::Changed),
                 _ => None,
             })
         }
@@ -251,12 +272,13 @@ fn rules(
             Kind::Removed(id.into()),
         ),
     ];
-    rules.extend(firewall_rules(Some(login), firewall)?);
+    rules.extend(firewall_rules(Some(login), firewall, false)?);
     Ok(rules)
 }
 fn firewall_rules(
     login: Option<&str>,
     firewall: Option<&str>,
+    network: bool,
 ) -> zbus::Result<Vec<(MatchRule<'static>, Kind)>> {
     let build = || MatchRule::builder().msg_type(Type::Signal);
     let mut rules = vec![(
@@ -270,6 +292,7 @@ fn firewall_rules(
         Kind::Owners {
             login: login.map(Into::into),
             firewall: firewall.map(Into::into),
+            network,
         },
     )];
     if let Some(firewall) = firewall {
@@ -277,6 +300,35 @@ fn firewall_rules(
             build()
                 .sender(firewall)?
                 .path("/org/fedoraproject/FirewallD1")?
+                .build()
+                .to_owned(),
+            Kind::Changed,
+        ));
+    }
+    Ok(rules)
+}
+// Wireless scan and statistics properties are left out: they change constantly.
+fn network_rules(owner: &str) -> zbus::Result<Vec<(MatchRule<'static>, Kind)>> {
+    let build = || MatchRule::builder().msg_type(Type::Signal).sender(owner);
+    let mut rules = vec![(
+        build()?
+            .interface("org.freedesktop.NetworkManager.Device")?
+            .member("StateChanged")?
+            .build()
+            .to_owned(),
+        Kind::Changed,
+    )];
+    for interface in [
+        "org.freedesktop.NetworkManager",
+        "org.freedesktop.NetworkManager.Device",
+        "org.freedesktop.NetworkManager.IP4Config",
+        "org.freedesktop.NetworkManager.IP6Config",
+    ] {
+        rules.push((
+            build()?
+                .interface("org.freedesktop.DBus.Properties")?
+                .member("PropertiesChanged")?
+                .arg(0, interface)?
                 .build()
                 .to_owned(),
             Kind::Changed,

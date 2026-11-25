@@ -665,8 +665,8 @@ struct Guarded {
     system: System,
     main_pid: u32,
 }
-// A firewalld reload drops runtime rules; restore them only for the same running
-// listener, the same reviewed approval and the reviewed network.
+// The lease admits connections only for the same running listener, the same
+// reviewed approval and the reviewed network.
 fn renew_lease(guarded: &Guarded) -> Result<Restored> {
     let runtime = tokio::runtime::Handle::current();
     let layout = Layout::default();

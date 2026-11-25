@@ -115,6 +115,52 @@ impl<I: Interface> Journal<'_, I> {
         }
         Ok(lease)
     }
+    /// Makes the owned rules match `desired`.
+    ///
+    /// Owned rules outside `desired` are removed, newest first, and missing
+    /// desired rules are added in order, each recorded before it is added. A
+    /// desired rule already present without a record stays borrowed. Returns
+    /// whether any rule was added or removed.
+    ///
+    /// # Errors
+    /// Fails when firewalld does not confirm a change or the journal cannot be
+    /// written; the journal still records every rule that may be present.
+    pub fn reconcile(&mut self, desired: &[Rule]) -> Result<bool> {
+        require(desired.len() <= LEASE_RULES, "firewall-lease-bound")?;
+        let mut owned = self.load()?;
+        let mut changed = false;
+        for index in (0..owned.len()).rev() {
+            let row = owned[index].clone();
+            if desired.contains(&row) {
+                continue;
+            }
+            if self.interface.query(&row)? {
+                self.interface.remove(&row)?;
+                changed = true;
+            }
+            require(
+                !self.interface.query(&row)?,
+                "firewall-rule-removal-unconfirmed",
+            )?;
+            owned.remove(index);
+            self.save(&owned)?;
+        }
+        for row in desired {
+            if self.interface.query(row)? {
+                continue;
+            }
+            if !owned.contains(row) {
+                owned.push(row.clone());
+                self.save(&owned)?;
+            }
+            changed = true;
+            require(
+                self.interface.add(row)? == row.zone && self.interface.query(row)?,
+                "firewall-rule-unconfirmed",
+            )?;
+        }
+        Ok(changed)
+    }
     /// Drops the ownership records without touching the provider.
     ///
     /// Only for a firewalld that is not running: it discards runtime rules when it stops.

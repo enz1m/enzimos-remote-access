@@ -87,8 +87,10 @@ The process runs as the verified desktop owner. Root approves an immutable
 run-only systemd credential; capture remains unprivileged. Logind and the exact
 compositor/socket identity are checked before and during the session. A Root
 firewall guard unit, bound to the sharing unit, restores the scoped lease after a
-firewalld reload or restart and ends sharing if the reviewed interface or zone no
-longer applies. While firewalld is stopped, sharing continues unfiltered.
+firewalld reload or restart. On every firewalld or NetworkManager change, and at
+least every 15 seconds, it checks the reviewed interface and zone. While they no
+longer apply only the lease's reject rule stays, and after 20 seconds sharing
+ends. While firewalld is stopped, sharing continues unfiltered.
 
 ## Acceptance boundaries
 

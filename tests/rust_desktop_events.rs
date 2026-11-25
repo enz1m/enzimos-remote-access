@@ -216,7 +216,7 @@ async fn a_firewall_guard_follows_firewalld_while_it_stops_and_starts() {
         .build()
         .await
         .unwrap();
-    let mut absent = Watch::firewall(&client).await.unwrap();
+    let mut absent = Watch::lease(&client).await.unwrap();
     assert!(quiet(&mut absent).await);
     let firewalld = named(&address, FIREWALLD).await;
     tokio::time::timeout(Duration::from_secs(2), absent.changed())
@@ -226,7 +226,7 @@ async fn a_firewall_guard_follows_firewalld_while_it_stops_and_starts() {
     assert!(absent.firewall_moved());
     absent.retire();
 
-    let mut running = Watch::firewall(&client).await.unwrap();
+    let mut running = Watch::lease(&client).await.unwrap();
     attacker
         .emit_signal(
             None::<&str>,
@@ -259,6 +259,89 @@ async fn a_firewall_guard_follows_firewalld_while_it_stops_and_starts() {
         .unwrap()
         .unwrap();
     assert!(running.firewall_moved());
+    assert!(!running.lost());
+    running.retire();
+    drop(attacker);
+    drop(client);
+    daemon.kill().await.unwrap();
+    daemon.wait().await.unwrap();
+}
+async fn device_changed(connection: &zbus::Connection, interface: &str) -> zbus::Result<()> {
+    connection
+        .emit_signal(
+            None::<&str>,
+            "/org/freedesktop/NetworkManager/Devices/2",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            &(
+                interface,
+                HashMap::<String, OwnedValue>::new(),
+                Vec::<String>::new(),
+            ),
+        )
+        .await
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_firewall_guard_follows_networkmanager_devices_and_connections() {
+    let (_temp, address, mut daemon) = private_bus().await;
+    const NETWORK_MANAGER: &str = "org.freedesktop.NetworkManager";
+    let client = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let attacker = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let mut absent = Watch::lease(&client).await.unwrap();
+    assert!(quiet(&mut absent).await);
+    let network = named(&address, NETWORK_MANAGER).await;
+    tokio::time::timeout(Duration::from_secs(2), absent.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!absent.firewall_moved());
+    absent.retire();
+
+    let mut running = Watch::lease(&client).await.unwrap();
+    device_changed(&attacker, "org.freedesktop.NetworkManager.Device")
+        .await
+        .unwrap();
+    device_changed(&network, "org.freedesktop.NetworkManager.Device.Wireless")
+        .await
+        .unwrap();
+    assert!(quiet(&mut running).await);
+    for interface in [
+        "org.freedesktop.NetworkManager.Device",
+        "org.freedesktop.NetworkManager.IP4Config",
+    ] {
+        device_changed(&network, interface).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), running.changed())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    network
+        .emit_signal(
+            None::<&str>,
+            "/org/freedesktop/NetworkManager/Devices/2",
+            "org.freedesktop.NetworkManager.Device",
+            "StateChanged",
+            &(30_u32, 100_u32, 39_u32),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), running.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(network);
+    tokio::time::timeout(Duration::from_secs(2), running.changed())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!running.lost());
     running.retire();
     drop(attacker);

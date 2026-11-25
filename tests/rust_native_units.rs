@@ -70,6 +70,12 @@ fn listeners_and_their_firewall_guards_stop_together_but_outlive_firewalld() {
             );
         }
     }
+    assert!(
+        fields(SSH, "Wants").iter().any(|wants| wants
+            .split_whitespace()
+            .any(|u| u == "enzimos-sshd-retry.timer")),
+        "an enabled listener does not arm its retry timer"
+    );
     assert_eq!(
         fields(SSH, "ExecStartPost"),
         ["/usr/lib/enzimos-remote/ssh-entry verify"]

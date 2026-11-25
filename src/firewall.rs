@@ -41,6 +41,12 @@ pub struct Rule {
     pub zone: String,
     pub rule: String,
 }
+impl Rule {
+    /// Whether the rule refuses connections rather than admitting them.
+    pub fn rejects(&self) -> bool {
+        self.rule.ends_with(" reject")
+    }
+}
 pub fn rules(config: &Value, zone: &str) -> Result<Vec<Rule>> {
     require(
         zone == TARGET

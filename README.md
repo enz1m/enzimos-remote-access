@@ -19,10 +19,14 @@ Review records the interface, firewall zone and NetworkManager connection of eac
 listen address. SSH starts at boot only on that same network, and starts later if
 the network connects after boot. Autostart requires a NetworkManager connection.
 A firewall guard restores the SSH allowance after a firewalld reload or restart.
+It checks the approval and the reviewed network on every firewalld or
+NetworkManager change and at least every 15 seconds. While the listen address
+is off the reviewed network, the firewall refuses new SSH connections. If it is
+still off after 20 seconds, the guard stops SSH, and SSH starts again once that
+network returns.
 While firewalld is stopped or not answering, SSH keeps listening only on its
-approved addresses and accepts connections from any network. The guard stops SSH
-only when the approval changes or the listen address leaves the reviewed network,
-and SSH starts again once that network returns. See
+approved addresses and accepts connections from any network, and the guard
+still stops it when the listen address leaves the reviewed network. See
 [SSH approval state](docs/SSH_APPROVAL_STATE.md) for upgrade and downgrade behaviour.
 Turning off the listener preserves established SSH sessions. Use
 `review-disconnect` and `disconnect` to close them separately.

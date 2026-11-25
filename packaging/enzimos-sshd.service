@@ -1,7 +1,8 @@
 [Unit]
 Description=enzimOS approved SSH and SFTP sharing
 After=dbus.service network-online.target firewalld.service NetworkManager.service
-Wants=network-online.target
+# Arms the late-network retry whenever SSH starts, also where only this unit is enabled.
+Wants=network-online.target enzimos-sshd-retry.timer
 Requires=dbus.service
 # Each unit stops the other: the listener never runs without its firewall guard.
 # firewalld is only ordered: with it stopped, SSH stays up and unfiltered.
