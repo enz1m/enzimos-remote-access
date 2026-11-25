@@ -164,3 +164,20 @@ fn unattended_sharing_watcher_is_root_off_by_default_and_independent_of_the_list
             .ends_with("/enzimos-desktop-sharing-autostart@.service")
     );
 }
+#[test]
+fn upgrade_hook_starts_the_guard_of_every_listener_that_binds_to_one() {
+    let hook = include_str!("../packaging/29-enzimos-remote-guards.hook");
+    assert_eq!(fields(SSH, "BindsTo"), ["enzimos-sshd-firewall.service"]);
+    assert_eq!(
+        fields(DESKTOP, "BindsTo"),
+        ["enzimos-desktop-sharing-firewall@%i.service"]
+    );
+    for text in [
+        "Target = usr/lib/systemd/system/enzimos-sshd.service",
+        "Target = usr/lib/systemd/system/enzimos-desktop-sharing@.service",
+        "enzimos-sshd.service) guard=enzimos-sshd-firewall.service",
+        "guard=enzimos-desktop-sharing-firewall@${unit#enzimos-desktop-sharing@}",
+    ] {
+        assert!(hook.contains(text), "{text}");
+    }
+}

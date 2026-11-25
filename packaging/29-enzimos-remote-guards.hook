@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+[Trigger]
+Operation = Upgrade
+Type = Path
+Target = usr/lib/systemd/system/enzimos-sshd.service
+Target = usr/lib/systemd/system/enzimos-desktop-sharing@.service
+
+[Action]
+Description = Starting the firewall guards of running enzimOS remote access...
+When = PostTransaction
+# Listeners bind to their guards, so the daemon reload of 30-systemd-daemon-reload-system.hook
+# stops a running listener whose guard is not running, as after an upgrade from a release
+# without guards.
+Exec = /bin/sh -c 'for unit in $(systemctl list-units --state=active --type=service --plain --no-legend enzimos-sshd.service "enzimos-desktop-sharing@*.service" | cut -d " " -f 1); do case $unit in enzimos-sshd.service) guard=enzimos-sshd-firewall.service ;; *) guard=enzimos-desktop-sharing-firewall@${unit#enzimos-desktop-sharing@} ;; esac; timeout 30 systemctl start "$guard" || echo "$guard did not start; $unit stops at the next daemon reload" >&2; done; exit 0'
