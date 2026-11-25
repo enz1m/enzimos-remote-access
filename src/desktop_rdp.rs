@@ -12,14 +12,23 @@ use std::{
     path::Path,
 };
 
+/// Installed path of the RDP server.
 pub const PROGRAM: &str = "/usr/lib/enzimos-rdp-provider/bin/krdpserver";
+/// Seals of the anonymous credential memfd.
 pub const SEALS: i32 =
     libc::F_SEAL_SEAL | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_WRITE;
 
+/// Whether `configuration` selects RDP.
 pub fn selected(configuration: &Value) -> bool {
     configuration["schema"].as_u64() == Some(2) && configuration["protocol"] == "rdp"
 }
 
+/// RDP server arguments for `configuration` with the inherited `listener` and `credential`
+/// descriptors.
+///
+/// # Errors
+///
+/// Fails when the configuration is not RDP, a descriptor is invalid, or the address is unavailable.
 pub fn command(
     configuration: &Value,
     identity: &Path,
@@ -83,6 +92,11 @@ pub fn command(
     Ok(args)
 }
 
+/// A sealed memfd holding `password` for the RDP server.
+///
+/// # Errors
+///
+/// Fails when the password is invalid or the memfd cannot be created and sealed.
 #[allow(
     unsafe_code,
     reason = "Linux syscall ABI (fchmod, fcntl, getuid, memfd_create)."
@@ -149,6 +163,7 @@ const ELFS: [&str; 5] = [
     "lib/libKPipeWireDmaBuf.so.6",
 ];
 
+/// The installed RDP provider, retained with its manifest.
 pub struct Installed {
     manifest_sha256: String,
     members: Vec<(std::path::PathBuf, File, std::fs::Metadata)>,
@@ -202,6 +217,11 @@ fn open_installed(
     Ok((path.to_path_buf(), file, meta))
 }
 impl Installed {
+    /// Observe the installed RDP provider.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the manifest or an installed file is invalid.
     pub fn observe() -> Result<Self> {
         use sha2::{Digest, Sha256};
         use std::io::Read;
@@ -244,9 +264,15 @@ impl Installed {
         installed.recheck()?;
         Ok(installed)
     }
+    /// JSON proof of the reviewed provider.
     pub fn proof(&self) -> Value {
         serde_json::json!({"name":"krdp-protected-sharing-v1", "manifest_sha256":self.manifest_sha256})
     }
+    /// Require that `proof` names this provider.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the provider changed.
     pub fn matches(&self, proof: &Value) -> Result<()> {
         self.recheck()?;
         require(
@@ -254,6 +280,11 @@ impl Installed {
             "desktop-rdp-reviewed-provider-changed",
         )
     }
+    /// The provider executable, refusing file capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the executable is not executable, has capabilities, or changed.
     #[allow(unsafe_code, reason = "Linux syscall ABI (fgetxattr).")]
     pub fn executable(&self) -> Result<File> {
         self.recheck()?;
@@ -275,6 +306,11 @@ impl Installed {
         )?;
         Ok(file.try_clone()?)
     }
+    /// Verify the installed files are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a file was replaced.
     pub fn recheck(&self) -> Result<()> {
         for (path, file, original) in &self.members {
             let (_, named, meta) = open_installed(path, 8 * 1024 * 1024)?;
@@ -290,6 +326,10 @@ impl Installed {
 }
 
 /// Execute the retained ELF using preallocated strings; safe for a forked child.
+///
+/// # Errors
+///
+/// Fails when the argument or environment list is too long, or execveat fails.
 #[allow(unsafe_code, reason = "Linux syscall ABI (execveat).")]
 pub fn exec_original(
     file: &File,

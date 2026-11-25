@@ -24,6 +24,11 @@ fn field_u32(v: &Value, k: &str) -> Result<u32> {
         .filter(|n| *n > 0 && *n < i32::MAX as u32)
         .ok_or_else(|| Error("ssh-connection-journal-invalid".into()))
 }
+/// Validate a connection journal and return its process rows.
+///
+/// # Errors
+///
+/// Fails when the journal or a row is invalid.
 pub fn validate(v: &Value) -> Result<Vec<Value>> {
     json::fields(v, "schema boot_id uid processes")?;
     require(
@@ -86,6 +91,11 @@ fn retained(pid: u32, uid: u32) -> Result<Retained> {
         &EXECUTABLES.iter().map(PathBuf::from).collect::<Vec<_>>(),
     )
 }
+/// Whether `main` serves `address`:`port` from its own cgroup for `uid`.
+///
+/// # Errors
+///
+/// Fails when the listener is not in the expected cgroup.
 pub fn listener(main: u32, uid: u32, address: IpAddr, port: u16) -> Result<bool> {
     let process = retained(main, uid)?;
     require(
@@ -100,6 +110,11 @@ pub fn listener(main: u32, uid: u32, address: IpAddr, port: u16) -> Result<bool>
     process.recheck()?;
     Ok(sockets::listening(&table, &owned, address, port))
 }
+/// Descendant processes of the listener `main` owned by `uid`.
+///
+/// # Errors
+///
+/// Fails when the listener cgroup differs, a process is invalid, or a bound is exceeded.
 pub fn descendants(main: u32, uid: u32) -> Result<Vec<Value>> {
     if main == 0 {
         return Ok(Vec::new());
@@ -148,18 +163,30 @@ pub fn descendants(main: u32, uid: u32) -> Result<Vec<Value>> {
     origin.recheck()?;
     Ok(found)
 }
+/// Tracks SSH session processes in a journal directory.
 pub struct Tracker {
+    /// Journal directory.
     pub directory: PathBuf,
+    /// Account the sessions belong to.
     pub uid: u32,
+    /// Owner of the journal files.
     pub owner: u32,
+    /// Boot the journal belongs to.
     pub boot_id: String,
+    /// Listener addresses.
     pub addresses: Vec<IpAddr>,
+    /// Listener port.
     pub port: u16,
 }
 impl Tracker {
     fn path(&self) -> PathBuf {
         self.directory.join("connections.json")
     }
+    /// Recorded processes of this boot and account.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the journal is invalid.
     pub fn load(&self) -> Result<Vec<Value>> {
         let Some(body) = files::read_optional(&self.path(), 131072, Some(self.owner), true)? else {
             return Ok(Vec::new());
@@ -183,6 +210,11 @@ impl Tracker {
             true,
         )
     }
+    /// Current remote connections of listener `main`.
+    ///
+    /// # Errors
+    ///
+    /// Fails unless run as Root, or when the journal or a process is invalid.
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub fn query(&self, main: u32) -> Result<Vec<Value>> {
         require(
@@ -256,6 +288,11 @@ impl Tracker {
         }
         Ok(found.into_values().collect())
     }
+    /// Disconnect the connections in `rows`, calling `before_commit` first.
+    ///
+    /// # Errors
+    ///
+    /// Fails unless run as Root, when `before_commit` fails, or a process cannot be signalled.
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub fn disconnect<F: FnMut() -> Result<()>>(
         &self,

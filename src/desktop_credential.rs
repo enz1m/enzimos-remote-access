@@ -8,6 +8,11 @@ use std::{
     os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
 };
+/// Read the system credential at `path` for `uid`.
+///
+/// # Errors
+///
+/// Fails when the credential is missing, writable, or changed.
 #[allow(unsafe_code, reason = "Linux syscall ABI (fstatvfs).")]
 pub fn read(path: &Path, uid: u32) -> Result<Vec<u8>> {
     desktop_grant::account(uid)?;
@@ -64,6 +69,11 @@ fn identity(m: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64, u32, u
         m.nlink(),
     )
 }
+/// The grant passed as a systemd credential to `uid`'s sharing unit.
+///
+/// # Errors
+///
+/// Fails outside that unit or when the credential is invalid.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 pub fn credential(uid: u32) -> Result<Value> {
     desktop_grant::account(uid)?;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access connections handling.
 use enzimos_platform::{files, json};
 use enzimos_remote_access::connections::{self, Tracker};
 use serde_json::json as value;

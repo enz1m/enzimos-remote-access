@@ -37,6 +37,11 @@ impl<'a> Reader<'a> {
         Ok(v)
     }
 }
+/// Validate one SSH public key line.
+///
+/// # Errors
+///
+/// Fails for unsupported or weak keys and malformed encodings.
 pub fn public_key(value: &str) -> Result<Value> {
     require(
         !value.is_empty() && value.len() <= 16384 && !value.chars().any(|c| (c as u32) < 32),
@@ -123,6 +128,11 @@ pub fn public_key(value: &str) -> Result<Value> {
         json!({"key":format!("{name} {}", STANDARD.encode(&blob)),"fingerprint":format!("SHA256:{}",STANDARD.encode(Sha256::digest(&blob)).trim_end_matches('=')),"type":name,"hardware_backed":hardware}),
     )
 }
+/// Validate a list of public keys.
+///
+/// # Errors
+///
+/// Fails when the list exceeds its bound, a key is invalid, or a key repeats.
 pub fn key_list(values: &Value) -> Result<Vec<Value>> {
     let values = values
         .as_array()

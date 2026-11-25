@@ -47,6 +47,7 @@ impl State {
         let _ = self.sender.try_send(());
     }
 }
+/// Session and firewall events that require a recheck.
 pub struct Watch {
     state: Arc<State>,
     receiver: mpsc::Receiver<()>,
@@ -77,7 +78,13 @@ impl Watch {
         watch.settle_firewall(connection, firewall.as_ref()).await?;
         Ok(watch)
     }
-    /// Also permits owned private-bus fixtures to prove the subscription boundary.
+    /// Watch session `id` through explicit logind and, if running, firewalld owners.
+    ///
+    /// Owned private-bus fixtures use this to prove the subscription boundary.
+    ///
+    /// # Errors
+    ///
+    /// Fails when an owner or the session path is invalid, or a subscription fails.
     pub async fn subscribe(
         connection: &Connection,
         login: &str,
@@ -215,6 +222,11 @@ impl Watch {
         }
         Ok(watch)
     }
+    /// Wait for the next change.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the watch is retired or authority was lost.
     pub async fn changed(&mut self) -> Result<()> {
         require(
             !self.state.closed.load(Ordering::Acquire),
@@ -226,6 +238,7 @@ impl Watch {
             .ok_or_else(|| Error("desktop-session-authority-lost".into()))?;
         require(!self.lost(), "desktop-session-authority-lost")
     }
+    /// Whether session authority was lost.
     pub fn lost(&self) -> bool {
         self.state.lost.load(Ordering::Acquire)
     }
@@ -235,6 +248,7 @@ impl Watch {
     pub fn firewall_moved(&self) -> bool {
         self.state.moved.load(Ordering::Acquire)
     }
+    /// Stop watching.
     pub fn retire(&mut self) {
         self.state.closed.store(true, Ordering::Release);
         self.receiver.close();

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access ssh files handling.
 use enzimos_platform::{files, json};
 use enzimos_remote_access::ssh_files::Layout;
 use serde_json::json as value;

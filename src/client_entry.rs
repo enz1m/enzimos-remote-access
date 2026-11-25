@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Local command-line client of the remote-access service.
 #[expect(
     clippy::print_stdout,
     reason = "The help text and JSON result are the command's output."

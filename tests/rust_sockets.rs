@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access sockets handling.
 use enzimos_remote_access::sockets;
 use std::{collections::BTreeSet, net::IpAddr};
 #[test]

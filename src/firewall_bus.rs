@@ -28,6 +28,11 @@ fn field<T: TryFrom<OwnedValue>>(v: &HashMap<String, OwnedValue>, key: &str) -> 
     )
     .map_err(|_| Error("remote-firewall-policy-field-type".into()))
 }
+/// Rich rules of the policy `settings`, after checking its fixed shape.
+///
+/// # Errors
+///
+/// Fails when the target, priority or zones differ from the fixed policy.
 pub fn policy_rows(settings: &HashMap<String, OwnedValue>) -> Result<Vec<String>> {
     require(
         settings.len() <= 128
@@ -54,6 +59,7 @@ pub fn policy_rows(settings: &HashMap<String, OwnedValue>) -> Result<Vec<String>
     )?;
     Ok(rows)
 }
+/// Firewalld on the system bus, pinned to its owner.
 #[derive(Clone)]
 pub struct Firewall {
     connection: Connection,
@@ -61,6 +67,11 @@ pub struct Firewall {
     runtime: tokio::runtime::Handle,
 }
 impl Firewall {
+    /// Firewalld on `connection`, pinned to its owner if it runs now or on first use.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the bus cannot report whether firewalld runs.
     pub async fn new(connection: Connection) -> Result<Self> {
         let bus = tokio::sync::OnceCell::new();
         if let Some(pinned) =
@@ -95,6 +106,11 @@ impl Firewall {
             Err(error) => Err(error),
         }
     }
+    /// Firewall zone of `interface`, or the default zone.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the interface is unknown or firewalld refuses.
     pub async fn zone_for(&self, interface: &str) -> Result<String> {
         require(
             !interface.is_empty()
@@ -117,6 +133,11 @@ impl Firewall {
         network::zone(&serde_json::json!(&zone))?;
         Ok(zone)
     }
+    /// Rich rules of the remote-access policy.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses or the policy changed.
     pub async fn rows(&self) -> Result<Vec<String>> {
         let settings: HashMap<String, OwnedValue> = self
             .bus()
@@ -125,6 +146,11 @@ impl Firewall {
             .await?;
         policy_rows(&settings)
     }
+    /// Whether `row` is present.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses.
     pub async fn query_async(&self, row: &Rule) -> Result<bool> {
         if row.zone == firewall::TARGET {
             Ok(self.rows().await?.contains(&row.rule))
@@ -196,6 +222,11 @@ impl Firewall {
         )?;
         Ok(firewall::TARGET.into())
     }
+    /// Add `row`, returning its token.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses.
     pub async fn add_async(&self, row: &Rule) -> Result<String> {
         if row.zone == firewall::TARGET {
             self.change_policy(&row.rule, true).await
@@ -212,6 +243,11 @@ impl Firewall {
                 .await
         }
     }
+    /// Remove `row`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses or the zone changed.
     pub async fn remove_async(&self, row: &Rule) -> Result<()> {
         let zone = if row.zone == firewall::TARGET {
             self.change_policy(&row.rule, false).await?

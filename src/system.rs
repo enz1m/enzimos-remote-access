@@ -7,11 +7,13 @@ use zbus::{
     Connection,
     zvariant::{OwnedObjectPath, OwnedValue},
 };
+/// Unit name of the SSH service.
 pub const SSH: &str = "enzimos-sshd.service";
 /// Timer that retries SSH autostart after its approved network appears late.
 pub const SSH_RETRY: &str = "enzimos-sshd-retry.timer";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const PATH: &str = "/org/freedesktop/systemd1";
+/// D-Bus properties of one systemd interface, by name.
 pub type Properties = HashMap<String, OwnedValue>;
 fn field<T: TryFrom<OwnedValue>>(v: &Properties, key: &str) -> Result<T> {
     T::try_from(
@@ -22,6 +24,11 @@ fn field<T: TryFrom<OwnedValue>>(v: &Properties, key: &str) -> Result<T> {
     )
     .map_err(|_| Error("remote-unit-property-type".into()))
 }
+/// Require one of the fixed remote-access unit names.
+///
+/// # Errors
+///
+/// Fails for any other unit.
 pub fn unit(value: &str) -> Result<()> {
     if value == SSH {
         return Ok(());
@@ -39,14 +46,25 @@ pub fn unit(value: &str) -> Result<()> {
         "remote-system-unit-invalid",
     )
 }
+/// Observed state of a unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
+    /// Unit ActiveState.
     pub active: String,
+    /// Main PID, or 0.
     pub main_pid: u32,
+    /// Control PID, or 0.
     pub control_pid: u32,
+    /// Number of descriptors in the unit's fd store.
     pub fdstore: u32,
+    /// Control group path.
     pub cgroup: String,
 }
+/// Build a snapshot from unit and service properties.
+///
+/// # Errors
+///
+/// Fails when a property is missing, mistyped, or out of bounds.
 pub fn snapshot(unit: &Properties, service: &Properties) -> Result<Snapshot> {
     require(
         unit.len() <= 512 && service.len() <= 512,
@@ -74,15 +92,22 @@ pub fn snapshot(unit: &Properties, service: &Properties) -> Result<Snapshot> {
         cgroup,
     })
 }
+/// One fixed systemd unit on the system bus.
 #[derive(Clone)]
 pub struct System {
     bus: Pinned,
     unit: String,
 }
 impl System {
+    /// The unit name.
     pub fn unit_name(&self) -> &str {
         &self.unit
     }
+    /// Bind to unit `name` through systemd on `connection`.
+    ///
+    /// # Errors
+    ///
+    /// Fails for other units or when systemd is unavailable.
     pub async fn new(connection: Connection, name: &str) -> Result<Self> {
         unit(name)?;
         Ok(Self {
@@ -90,10 +115,20 @@ impl System {
             unit: name.into(),
         })
     }
+    /// Current state of the unit.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the properties cannot be read.
     pub async fn properties(&self) -> Result<Snapshot> {
         let (unit, service) = self.raw_properties().await?;
         snapshot(&unit, &service)
     }
+    /// Raw unit and service properties.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the unit cannot be loaded or its properties read.
     pub async fn raw_properties(&self) -> Result<(Properties, Properties)> {
         let path: OwnedObjectPath = self
             .bus
@@ -162,6 +197,11 @@ impl System {
             "remote-unit-job-invalid",
         )
     }
+    /// Start or stop the unit (`start` or `stop`) and wait for the job.
+    ///
+    /// # Errors
+    ///
+    /// Fails for other operations or when the job fails or times out.
     pub async fn job(&self, operation: &str) -> Result<()> {
         let method = match operation {
             "start" => "StartUnit",
@@ -206,6 +246,11 @@ impl System {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+    /// Enable or disable the unit at boot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the unit cannot be enabled or disabled.
     pub async fn autostart(&self, enabled: bool) -> Result<()> {
         let changes: Vec<(String, String, String)> = if enabled {
             let (install, changes): (bool, Vec<(String, String, String)>) = self
@@ -238,6 +283,11 @@ impl System {
         )?;
         self.bus.call(PATH, MANAGER, "Reload", &()).await
     }
+    /// Empty the unit's fd store; the unit must be stopped.
+    ///
+    /// # Errors
+    ///
+    /// Fails while the unit runs or when cleaning fails or times out.
     pub async fn clean_fdstore(&self) -> Result<()> {
         require(
             self.unit != SSH,
@@ -285,6 +335,11 @@ impl System {
         }
     }
 }
+/// Require that `value` is a stopped unit.
+///
+/// # Errors
+///
+/// Fails while the unit is active.
 pub fn stopped(value: &Snapshot) -> Result<()> {
     require(
         matches!(value.active.as_str(), "inactive" | "failed")

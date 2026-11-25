@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Desktop-sharing worker run as the sharing user.
 use enzimos_platform::{Error, Result, accounts, require};
 use enzimos_remote_access::{bus_adapter, desktop_credential, desktop_worker, listener};
 #[allow(

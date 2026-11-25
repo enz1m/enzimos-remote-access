@@ -32,11 +32,37 @@ pub enum Operation {
     /// Turns unattended sharing on or off.
     Unattended,
 }
+/// A provider that reviews before it changes.
 pub trait Reviewed: Send + 'static {
+    /// Current state for `peer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the state cannot be observed.
     fn query(&mut self, peer: &Peer) -> Result<Value>;
+    /// Review `configuration` for `peer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the configuration is invalid.
     fn review(&mut self, peer: &Peer, configuration: &Value) -> Result<Value>;
+    /// Review stopping `peer`'s sharing.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the state cannot be observed.
     fn review_stop(&mut self, peer: &Peer) -> Result<Value>;
+    /// Review turning unattended sharing for `peer` on or off.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the state cannot be observed or the change is not allowed now.
     fn review_unattended(&mut self, peer: &Peer, enabled: bool) -> Result<Value>;
+    /// Apply a reviewed change, calling `before_commit` before committing.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the review is stale or the change fails.
     fn change(
         &mut self,
         peer: &Peer,
@@ -78,6 +104,7 @@ fn operation_lock(directory: &Path) -> Result<files::Lock> {
         std::thread::sleep(Duration::from_millis(200));
     }
 }
+/// The desktop-sharing provider.
 pub struct Desktop {
     connection: Connection,
     session: Session,
@@ -85,6 +112,11 @@ pub struct Desktop {
     runtime: tokio::runtime::Handle,
 }
 impl Desktop {
+    /// Open the provider on `connection`.
+    ///
+    /// # Errors
+    ///
+    /// Fails outside the root context or when a dependency is unavailable.
     pub async fn new(connection: Connection) -> Result<Self> {
         ssh_provider::root_context()?;
         Ok(Self {
@@ -386,6 +418,11 @@ impl Desktop {
             && matches!(record["phase"].as_str(), Some("pending" | "uncertain")))
     }
 }
+/// Validate a desktop operation receipt for `uid`.
+///
+/// # Errors
+///
+/// Fails when the receipt is malformed.
 pub fn receipt_validate(record: &Value, uid: u32) -> Result<()> {
     json::fields(
         record,

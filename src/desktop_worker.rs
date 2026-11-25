@@ -19,6 +19,11 @@ use tokio::{
     signal::unix::{SignalKind, signal},
 };
 
+/// VNC server arguments for `configuration` in `directory` with the inherited listener.
+///
+/// # Errors
+///
+/// Fails when the configuration is not a VNC sharing grant or the descriptor is invalid.
 pub fn command(configuration: &Value, directory: &Path, listener_fd: i32) -> Result<Vec<String>> {
     require(
         !crate::desktop_rdp::selected(configuration),
@@ -134,6 +139,11 @@ impl Drop for Capture {
         let _ = self.signal(libc::SIGKILL);
     }
 }
+/// Serve sharing for `uid` on `connection` until authority ends.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account, an invalid grant, or when the server cannot run.
 #[allow(unsafe_code, reason = "Fork-child setup must run before exec.")]
 pub async fn run(
     uid: u32,

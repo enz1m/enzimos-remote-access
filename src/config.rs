@@ -113,6 +113,11 @@ fn integer(v: &Value, lo: u64, hi: u64, code: &str) -> Result<u64> {
     require((lo..=hi).contains(&n), code)?;
     Ok(n)
 }
+/// Validate an SSH configuration for `account` against the local `addresses`.
+///
+/// # Errors
+///
+/// Fails when a field is missing or invalid.
 pub fn ssh(v: &Value, account: &str, addresses: &BTreeSet<IpAddr>) -> Result<Value> {
     let mut required = v.clone();
     if let Some(fields) = required.as_object_mut() {
@@ -168,6 +173,11 @@ pub fn ssh(v: &Value, account: &str, addresses: &BTreeSet<IpAddr>) -> Result<Val
     result["account"] = value!(account);
     Ok(result)
 }
+/// Render the sshd configuration for a reviewed configuration.
+///
+/// # Errors
+///
+/// Fails when the configuration is noncanonical.
 pub fn render_ssh(c: &Value) -> Result<String> {
     // Public callers cannot bypass review by passing a hand-built Value with
     // injected account or network lines directly to the renderer.
@@ -306,6 +316,11 @@ pub fn render_ssh(c: &Value) -> Result<String> {
     );
     Ok(rows.join("\n") + "\n")
 }
+/// Validate a desktop-sharing configuration against the local `addresses`.
+///
+/// # Errors
+///
+/// Fails when a field is missing or invalid.
 pub fn desktop(v: &Value, addresses: &BTreeSet<IpAddr>) -> Result<Value> {
     let rdp = v["schema"].as_u64() == Some(2);
     json::fields(
@@ -352,6 +367,11 @@ pub fn desktop(v: &Value, addresses: &BTreeSet<IpAddr>) -> Result<Value> {
     result["allowed_networks"] = value!(networks(&v["allowed_networks"], ip)?);
     Ok(result)
 }
+/// RDP server TLS configuration naming files in `directory`.
+///
+/// # Errors
+///
+/// Fails when the path or password contains forbidden characters.
 pub fn tls_config(directory: &Path, password: &str) -> Result<Vec<u8>> {
     require(
         directory.is_absolute()

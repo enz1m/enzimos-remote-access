@@ -3,6 +3,11 @@ use enzimos_platform::{Result, require};
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
+/// Reserve a single-stack listener on `address`.
+///
+/// # Errors
+///
+/// Fails for scoped addresses or when the reservation is refused.
 #[allow(
     unsafe_code,
     reason = "Linux syscall ABI (bind, listen, setsockopt, socket)."
@@ -107,6 +112,11 @@ fn option(fd: i32, level: i32, name: i32) -> Result<i32> {
 }
 
 // Takes ownership only after the fixed systemd activation envelope matches.
+/// The reserved listener passed by systemd, checked against `expected`.
+///
+/// # Errors
+///
+/// Fails when the descriptor is missing, invalid, or bound elsewhere.
 #[allow(unsafe_code, reason = "Linux syscall ABI (fcntl, fstat).")]
 pub fn receive(expected: SocketAddr) -> Result<TcpListener> {
     require(

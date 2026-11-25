@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access system handling.
 use enzimos_remote_access::system::{self, Properties};
 use zbus::zvariant::Value;
 #[test]

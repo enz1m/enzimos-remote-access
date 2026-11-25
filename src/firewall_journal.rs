@@ -4,6 +4,11 @@ use crate::firewall::{Interface, LEASE_RULES, Lease, Rule};
 use enzimos_platform::{Error, Result, files, json, require};
 use serde_json::{Value, json as value};
 use std::path::Path;
+/// Validate a firewall journal and return its owned rules.
+///
+/// # Errors
+///
+/// Fails when the journal is malformed or repeats a rule.
 pub fn validate(v: &Value) -> Result<Vec<Rule>> {
     json::fields(v, "schema boot_id owned")?;
     require(
@@ -48,13 +53,23 @@ pub fn validate(v: &Value) -> Result<Vec<Rule>> {
         })
         .collect()
 }
+/// Records the rules a lease added so they survive restarts.
 pub struct Journal<'a, I> {
+    /// Journal file.
     pub path: &'a Path,
+    /// Owner of the journal.
     pub owner: u32,
+    /// Boot the journal belongs to.
     pub boot_id: &'a str,
+    /// Firewall to apply rules to.
     pub interface: &'a mut I,
 }
 impl<I: Interface> Journal<'_, I> {
+    /// Owned rules recorded for this boot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the journal is invalid.
     pub fn load(&self) -> Result<Vec<Rule>> {
         let Some(body) = files::read_optional(self.path, 16384, Some(self.owner), true)? else {
             return Ok(Vec::new());
@@ -78,6 +93,11 @@ impl<I: Interface> Journal<'_, I> {
             true,
         )
     }
+    /// Ensure `desired` is present, journaling added rules first.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a prior lease needs cleanup, the bound is exceeded, or a rule is unconfirmed.
     pub fn acquire(&mut self, desired: &[Rule]) -> Result<Lease> {
         require(
             self.load()?.is_empty(),
@@ -173,6 +193,11 @@ impl<I: Interface> Journal<'_, I> {
         }
         self.save(&[])
     }
+    /// Remove the journaled rules.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a removal is unconfirmed.
     pub fn release(&mut self) -> Result<()> {
         let mut owned = self.load()?;
         while let Some(row) = owned.last() {

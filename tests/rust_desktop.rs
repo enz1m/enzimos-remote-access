@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access desktop handling.
 use enzimos_remote_access::{desktop_grant, desktop_identity};
 use serde_json::{Value, json};
 use std::{

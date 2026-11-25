@@ -12,11 +12,17 @@ use std::{
 };
 use zbus::Connection;
 const NOTIFY: &str = "/run/systemd/notify";
+/// The sharing listener held in the unit's systemd file descriptor store.
 pub struct Store {
     system: System,
     uid: u32,
 }
 impl Store {
+    /// Open the store of `uid`'s sharing unit.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the unit cannot be resolved.
     pub async fn new(connection: Connection, uid: u32) -> Result<Self> {
         desktop_grant::account(uid)?;
         Ok(Self {
@@ -56,6 +62,11 @@ impl Store {
             .await
             .map_err(|_| Error("desktop-listener-store-receipt-uncertain".into()))?
     }
+    /// Reserve `endpoint` and store its listener.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the unit is not in its prepare step or storing is unconfirmed.
     pub async fn hold(&self, endpoint: SocketAddr) -> Result<TcpListener> {
         let p = self.properties().await?;
         require(
@@ -76,6 +87,10 @@ impl Store {
         Ok(socket)
     }
     /// Caller invokes only after revoking compositor grants and firewall leases.
+    ///
+    /// # Errors
+    ///
+    /// Fails when removal is unconfirmed.
     pub async fn clear(&self) -> Result<()> {
         let p = self.properties().await?;
         if p.fdstore == 0 {

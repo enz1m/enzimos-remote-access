@@ -12,13 +12,24 @@ use std::{
     },
     time::Instant,
 };
+/// Largest request body in bytes.
 pub const MAX_REQUEST: usize = 65536;
+/// Decode a request body with exactly the `schema` and `fields`.
+///
+/// # Errors
+///
+/// Fails when the body is malformed or has other fields.
 pub fn decode(body: &str, fields: &str) -> Result<Value> {
     let v = json::decode(body.as_bytes(), MAX_REQUEST)?;
     json::fields(&v, &format!("schema {fields}"))?;
     require(v["schema"].as_u64() == Some(1), "request-fields")?;
     Ok(v)
 }
+/// Decode an apply or disconnect request.
+///
+/// # Errors
+///
+/// Fails when the body is malformed or a field is invalid.
 pub fn mutation_request(body: &str, apply: bool) -> Result<Value> {
     reviewed_mutation(body, apply.then_some("configuration"))
 }
@@ -60,9 +71,25 @@ fn graphical(peer: &Peer) -> Result<()> {
         "active-local-graphical-session-required",
     )
 }
+/// A provider that can also review and query.
 pub trait ReviewedProvider: Provider + Send + 'static {
+    /// Review `configuration` for `uid`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the configuration is invalid.
     fn review(&mut self, uid: u32, configuration: &Value) -> Result<Value>;
+    /// Review disconnecting `uid`'s sessions.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the state cannot be observed.
     fn review_disconnect(&mut self, uid: u32) -> Result<Value>;
+    /// Current state for `uid`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the state cannot be observed.
     fn query(&mut self, uid: u32) -> Result<Value>;
 }
 struct Alive(Arc<AtomicBool>);
@@ -71,15 +98,18 @@ impl Drop for Alive {
         self.0.store(false, Ordering::Release);
     }
 }
+/// Dispatches authorized requests to the provider, one at a time per slot.
 pub struct Dispatcher<P> {
     authority: Authority,
     provider: Arc<Mutex<P>>,
     slots: Arc<Slots>,
 }
 impl<P: ReviewedProvider> Dispatcher<P> {
+    /// A dispatcher with its own slots.
     pub fn new(authority: Authority, provider: P) -> Self {
         Self::with_slots(authority, provider, Slots::new())
     }
+    /// A dispatcher sharing `slots`.
     pub fn with_slots(authority: Authority, provider: P, slots: Arc<Slots>) -> Self {
         Self {
             authority,
@@ -87,6 +117,11 @@ impl<P: ReviewedProvider> Dispatcher<P> {
             slots,
         }
     }
+    /// State for the caller `sender`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the caller has no session, the provider is busy, or the session changed.
     pub async fn query(&self, sender: &str) -> Result<Value> {
         let permit = self.slots.acquire()?;
         let peer = self.authority.peer(sender).await?;
@@ -109,6 +144,11 @@ impl<P: ReviewedProvider> Dispatcher<P> {
         .await
         .map_err(|_| Error("remote-provider-unavailable".into()))?
     }
+    /// Review a configuration or disconnect request from `sender`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the request is invalid, the caller has no session, or the provider fails.
     pub async fn review(&self, body: &str, sender: &str, disconnect: bool) -> Result<Value> {
         let permit = self.slots.acquire()?;
         let (result, _permit) = self.review_inner(body, sender, disconnect, permit).await?;
@@ -146,6 +186,11 @@ impl<P: ReviewedProvider> Dispatcher<P> {
         .await
         .map_err(|_| Error("remote-provider-unavailable".into()))?
     }
+    /// Apply a reviewed configuration or disconnect request from `sender` after polkit approval.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the review is stale, authorization is refused, or the provider fails.
     pub async fn mutate(&self, body: &str, sender: &str, disconnect: bool) -> Result<Value> {
         let arrived = Instant::now();
         let permit = self.slots.acquire()?;

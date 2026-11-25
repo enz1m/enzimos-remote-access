@@ -5,14 +5,24 @@ use enzimos_platform::{Error, Result, files, json, require};
 use serde_json::{Value, json as value};
 use std::{path::PathBuf, time::Duration};
 use zbus::{Connection, Proxy};
+/// A parsed local command.
 pub struct Command {
+    /// Command name.
     pub name: String,
+    /// Configuration file to review or apply.
     pub configuration: Option<PathBuf>,
+    /// Whether polkit may ask for authentication.
     pub interaction: bool,
     /// The requested state for unattended desktop sharing commands.
     pub unattended: Option<bool>,
 }
+/// Usage text.
 pub const HELP: &str = "enzimos-remote capabilities|query|query-desktop|review-disconnect|disconnect|review-stop-desktop|stop-desktop|review FILE|apply FILE|review-desktop FILE|apply-desktop FILE|review-unattended-desktop on|off|set-unattended-desktop on|off [--allow-interaction]\n";
+/// Parse command-line arguments.
+///
+/// # Errors
+///
+/// Fails for an unknown command or invalid arguments.
 pub fn parse(args: &[String]) -> Result<Command> {
     require(!args.is_empty(), "invalid-local-command")?;
     let name = args[0].as_str();
@@ -111,6 +121,11 @@ async fn call(connection: &Connection, member: &str, body: Option<Value>) -> Res
     };
     decode_reply(member, result.as_bytes())
 }
+/// Decode the JSON reply to `member`.
+///
+/// # Errors
+///
+/// Fails when the reply is malformed.
 pub fn decode_reply(member: &str, body: &[u8]) -> Result<Value> {
     let value = json::decode(body, 2 * 1024 * 1024)?;
     if member.starts_with("Review") {
@@ -138,6 +153,11 @@ fn public_bus_error(error: zbus::Error) -> Error {
     }
     Error("operation-unavailable-or-outcome-unknown".into())
 }
+/// Run `command` against the remote-access service.
+///
+/// # Errors
+///
+/// Fails when the configuration is invalid, the service is unavailable, or the call fails.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 pub async fn execute(command: Command) -> Result<Value> {
     if command.name != "capabilities" {

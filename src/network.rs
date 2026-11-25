@@ -7,6 +7,11 @@ use zbus::{
     Connection,
     zvariant::{OwnedObjectPath, OwnedValue},
 };
+/// Parse `ip -json address` output into local addresses and their interfaces.
+///
+/// # Errors
+///
+/// Fails when the output is malformed or exceeds a bound.
 pub fn parse_interfaces(body: &[u8]) -> Result<BTreeMap<IpAddr, String>> {
     let v = json::decode(body, 131072)?;
     let rows = v
@@ -52,6 +57,11 @@ pub fn parse_interfaces(body: &[u8]) -> Result<BTreeMap<IpAddr, String>> {
     }
     Ok(found)
 }
+/// Local addresses and their interfaces.
+///
+/// # Errors
+///
+/// Fails when `ip` fails or its output is invalid.
 pub fn interfaces() -> Result<BTreeMap<IpAddr, String>> {
     let result = process::run(
         "/usr/bin/ip",
@@ -63,6 +73,11 @@ pub fn interfaces() -> Result<BTreeMap<IpAddr, String>> {
     require(result.status.success(), "local-addresses-unavailable")?;
     parse_interfaces(&result.stdout)
 }
+/// Firewall zone named in `value`.
+///
+/// # Errors
+///
+/// Fails when the zone is missing or invalid.
 pub fn zone(value: &Value) -> Result<&str> {
     let s = value
         .as_str()

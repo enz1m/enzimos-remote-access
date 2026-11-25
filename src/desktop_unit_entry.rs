@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Entry point of the desktop-sharing, firewall guard and unattended-start units.
 use enzimos_platform::{Error, Result, require};
 #[allow(
     unsafe_code,

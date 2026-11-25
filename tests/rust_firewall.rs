@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access firewall handling.
 use enzimos_platform::{Error, Result};
 use enzimos_remote_access::firewall::{self, Interface, Rule};
 use serde_json::json;

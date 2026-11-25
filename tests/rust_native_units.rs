@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access native units handling.
 use enzimos_remote_access::desktop_unit_trust;
 use serde_json::Value;
 const DESKTOP: &str = include_str!("../packaging/enzimos-desktop-sharing@.service");

@@ -17,7 +17,13 @@ use std::{
     },
     path::{Path, PathBuf},
 };
+/// Installed compositor executable.
 pub const COMPOSITOR: &str = "/usr/lib/enzui/compositor/hyprland-current-build/Hyprland";
+/// Metadata of the installed file `path`, requiring Root-owned unwritable ancestors.
+///
+/// # Errors
+///
+/// Fails when the file or an ancestor is untrusted.
 pub fn installed(path: &Path) -> Result<std::fs::Metadata> {
     let parent = files::directory(
         path.parent()
@@ -67,6 +73,11 @@ fn follow_kernel(pid: u32, uid: u32, name: &str) -> Result<File> {
     // SAFETY: `fd` was just returned by openat and is owned by nothing else.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
+/// Mount namespace device and inode of process `pid` of `uid`.
+///
+/// # Errors
+///
+/// Fails when the process cannot be inspected.
 pub fn namespace(pid: u32, uid: u32) -> Result<[u64; 2]> {
     let m = follow_kernel(pid, uid, "ns/mnt")?.metadata()?;
     Ok([m.dev(), m.ino()])
@@ -100,6 +111,11 @@ fn group_admitted(groups: &str, uid: u32, id: &str, manager_owned: bool) -> bool
                 })
     })
 }
+/// Identity proof of compositor `pid` in session `id` of `uid`.
+///
+/// # Errors
+///
+/// Fails when the process is not that session's compositor.
 pub fn process(
     pid: u32,
     uid: u32,
@@ -135,6 +151,11 @@ pub fn process(
         value!({"pid":pid,"start_ticks":stat.start_ticks,"device":m.dev(),"inode":m.ino(),"mount_namespace":initial_namespace}),
     )
 }
+/// Descendant processes of `leader` owned by `uid`.
+///
+/// # Errors
+///
+/// Fails when a process is invalid or the bound is exceeded.
 pub fn descendants(leader: u32, uid: u32) -> Result<Vec<u32>> {
     let mut pending = VecDeque::from([leader]);
     let mut seen = BTreeSet::new();
@@ -167,6 +188,11 @@ pub fn descendants(leader: u32, uid: u32) -> Result<Vec<u32>> {
     }
     Ok(seen.into_iter().collect())
 }
+/// Proof that Wayland socket `path` of `uid` is served by `pid`.
+///
+/// # Errors
+///
+/// Fails when the socket is untrusted, has another peer, or was replaced.
 #[allow(
     unsafe_code,
     reason = "Linux syscall ABI (connect, getsockopt, openat, socket)."
@@ -277,6 +303,11 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
     )?;
     Ok(value!({"path":path,"device":m.dev(),"inode":m.ino()}))
 }
+/// Recheck a session proof and retain its compositor.
+///
+/// # Errors
+///
+/// Fails when the proof is invalid or the compositor or socket was replaced.
 pub fn verify(bound: &Value) -> Result<Retained> {
     let uid = bound["uid"]
         .as_u64()

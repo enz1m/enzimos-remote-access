@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access controller handling.
 use enzimos_platform::{Error, Result};
 use enzimos_remote_access::{
     controller::{self, Provider},

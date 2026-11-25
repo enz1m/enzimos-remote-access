@@ -8,6 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 const BASE: &str = "/run/enzimos-compositor-grants";
+/// Control group of `uid`'s sharing unit.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account.
 pub fn group(uid: u32) -> Result<String> {
     Ok(format!(
         "/system.slice/enzimos-desktop-sharing@{}.service",
@@ -20,6 +25,11 @@ fn name(uid: u32) -> Result<String> {
         desktop_grant::account(uid)?
     ))
 }
+/// Compositor grant file body.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account.
 pub fn body(uid: u32, view_only: bool) -> Result<Vec<u8>> {
     Ok(format!(
         "uid={uid}\ncgroup={}\nkinds={}\n",
@@ -32,6 +42,11 @@ pub fn body(uid: u32, view_only: bool) -> Result<Vec<u8>> {
     )
     .into_bytes())
 }
+/// Publish the compositor grant for `uid`.
+///
+/// # Errors
+///
+/// Fails unless run as Root from the sharing unit.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn publish(uid: u32, view_only: bool) -> Result<()> {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -50,6 +65,11 @@ pub fn publish(uid: u32, view_only: bool) -> Result<()> {
     files::read_optional(&destination, 4096, Some(0), true)?;
     files::atomic(&destination, &body(uid, view_only)?, 0o644, Some(0), true)
 }
+/// Revoke the compositor grant for `uid`.
+///
+/// # Errors
+///
+/// Fails unless run as Root, or when removal is uncertain.
 #[allow(
     unsafe_code,
     reason = "Linux syscall ABI (fstatat, geteuid, unlinkat)."

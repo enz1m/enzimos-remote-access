@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Remote-access D-Bus service.
 use enzimos_platform::{Error, Result, require};
 #[allow(
     unsafe_code,

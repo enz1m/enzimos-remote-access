@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT
+//! Firewalld policy and rich rules that open the remote-access listeners.
 use enzimos_platform::{Error, Result, require};
 use ipnet::IpNet;
 use serde_json::{Value, json as value};
 use std::net::IpAddr;
+/// Name of the firewalld policy holding the remote-access rules.
 pub const NAME: &str = "enzimosRemote";
+/// Firewalld target of that policy.
 pub const TARGET: &str = "policy:enzimosRemote";
 /// Most rules one listener's lease may own; the journal is bounded to match.
 pub const LEASE_RULES: usize = 17;
+/// Rich rules of the policy settings `v`, after checking its fixed shape.
+///
+/// # Errors
+///
+/// Fails when the target, priority or zones differ from the fixed policy.
 pub fn policy_rows(v: &Value) -> Result<Vec<String>> {
     require(
         v["target"] == "CONTINUE"
@@ -36,9 +44,12 @@ pub fn policy_rows(v: &Value) -> Result<Vec<String>> {
         })
         .collect()
 }
+/// One firewall rich rule in a zone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rule {
+    /// Zone of the rule.
     pub zone: String,
+    /// Rich rule text.
     pub rule: String,
 }
 impl Rule {
@@ -47,6 +58,11 @@ impl Rule {
         self.rule.ends_with(" reject")
     }
 }
+/// Rich rules that open the configured listeners in `zone`.
+///
+/// # Errors
+///
+/// Fails when the configuration or zone is invalid.
 pub fn rules(config: &Value, zone: &str) -> Result<Vec<Rule>> {
     require(
         zone == TARGET
@@ -153,14 +169,37 @@ pub fn lease_rules(config: &Value) -> Result<Vec<Rule>> {
 }
 /// Implementations pin and recheck their D-Bus owner on each operation.
 pub trait Interface {
+    /// Whether `row` is present.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld cannot be queried.
     fn query(&mut self, row: &Rule) -> Result<bool>;
+    /// Add `row`, returning its token.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses.
     fn add(&mut self, row: &Rule) -> Result<String>;
+    /// Remove `row`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when firewalld refuses.
     fn remove(&mut self, row: &Rule) -> Result<()>;
 }
+/// Rules added by this lease and rules that already existed.
 pub struct Lease {
+    /// Rules this lease added and must remove.
     pub owned: Vec<Rule>,
+    /// Rules that existed before and are left alone.
     pub preexisting: Vec<Rule>,
 }
+/// Ensure every `desired` rule is present, remembering which were added.
+///
+/// # Errors
+///
+/// Fails when the rule count is out of bounds, the zone changed, or a rule is unconfirmed.
 pub fn acquire<I: Interface>(interface: &mut I, desired: &[Rule]) -> Result<Lease> {
     require(
         (1..=LEASE_RULES).contains(&desired.len()),
@@ -190,6 +229,11 @@ pub fn acquire<I: Interface>(interface: &mut I, desired: &[Rule]) -> Result<Leas
     }
     Ok(lease)
 }
+/// Remove the `owned` rules.
+///
+/// # Errors
+///
+/// Fails when a removal is unconfirmed or cleanup is incomplete.
 pub fn release<I: Interface>(interface: &mut I, owned: &[Rule]) -> Result<()> {
     let mut failed = false;
     for row in owned.iter().rev() {

@@ -8,6 +8,11 @@ use zbus::{
     names::{BusName, OwnedUniqueName},
     zvariant::{DynamicDeserialize, DynamicType},
 };
+/// Await `future` for at most `seconds`.
+///
+/// # Errors
+///
+/// Fails when the deadline passes or the call fails.
 pub async fn bounded<T, E, F: Future<Output = std::result::Result<T, E>>>(
     future: F,
     seconds: u64,
@@ -17,6 +22,7 @@ pub async fn bounded<T, E, F: Future<Output = std::result::Result<T, E>>>(
         .map_err(|_| Error("remote-provider-deadline".into()))?
         .map_err(|_| Error("remote-provider-unavailable".into()))
 }
+/// A system bus service pinned to the unique name that owned it when opened.
 #[derive(Clone)]
 pub struct Pinned {
     connection: Connection,
@@ -24,9 +30,15 @@ pub struct Pinned {
     owner: OwnedUniqueName,
 }
 impl Pinned {
+    /// Unique name of the pinned owner.
     pub fn owner(&self) -> &str {
         self.owner.as_str()
     }
+    /// Pin the owner of `name`, activating it if needed.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `name` is not an allowed service or is unavailable.
     pub async fn new(connection: Connection, name: &'static str) -> Result<Self> {
         require(
             matches!(
@@ -51,6 +63,11 @@ impl Pinned {
             owner,
         })
     }
+    /// Pin the owner of `name` only when it is already running.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `name` is not an allowed service or the bus fails.
     pub async fn if_running(connection: Connection, name: &'static str) -> Result<Option<Self>> {
         let daemon = bounded(DBusProxy::new(&connection), 2).await?;
         let bus_name = BusName::try_from(name).map_err(|_| Error("remote-provider-name".into()))?;
@@ -64,6 +81,11 @@ impl Pinned {
             _ => Err(Error("remote-provider-unavailable".into())),
         }
     }
+    /// Require that the owner has not changed.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the owner changed.
     pub async fn recheck(&self) -> Result<()> {
         let daemon = bounded(DBusProxy::new(&self.connection), 2).await?;
         let actual = bounded(
@@ -78,6 +100,11 @@ impl Pinned {
             "remote-provider-owner-changed-no-retry",
         )
     }
+    /// Call `method` on the pinned owner.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the owner changed or the call fails.
     pub async fn call<B, R>(&self, path: &str, interface: &str, method: &str, body: &B) -> Result<R>
     where
         B: serde::Serialize + DynamicType,

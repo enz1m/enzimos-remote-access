@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access config handling.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use enzimos_remote_access::{config, keys, state};
 use serde_json::{Value, json};

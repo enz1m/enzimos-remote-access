@@ -11,10 +11,20 @@ use std::{
 };
 use zbus::Connection;
 
+/// Validated desktop-sharing account `uid`.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account.
 pub fn account(uid: u32) -> Result<u32> {
     require((1000..u32::MAX).contains(&uid), "desktop-account-invalid")?;
     Ok(uid)
 }
+/// Grant folder of `uid`.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account.
 pub fn folder(uid: u32) -> Result<PathBuf> {
     Ok(Path::new("/run/enzimos-remote/sharing").join(account(uid)?.to_string()))
 }
@@ -32,6 +42,11 @@ fn positive(v: &Value) -> Result<u64> {
     require(n > 0, "desktop-session-proof-invalid")?;
     Ok(n)
 }
+/// Validate the session proof `bound` for `uid`.
+///
+/// # Errors
+///
+/// Fails when the proof is malformed or belongs to another account.
 pub fn session(bound: &Value, uid: u32) -> Result<()> {
     json::fields(bound, "uid id leader seat compositor wayland manager_owned")?;
     require(
@@ -76,6 +91,11 @@ pub fn session(bound: &Value, uid: u32) -> Result<()> {
         "desktop-session-proof-invalid",
     )
 }
+/// Validate a sharing grant for `uid` on this boot, returning it with its checked configuration.
+///
+/// # Errors
+///
+/// Fails when the grant is malformed or not a session-sharing grant.
 pub fn validate(
     value: &Value,
     uid: u32,
@@ -136,6 +156,11 @@ pub fn validate(
     result["configuration"] = checked;
     Ok(result)
 }
+/// Load `uid`'s grant.
+///
+/// # Errors
+///
+/// Fails when the grant is missing, has wrong permissions, or changed.
 pub fn load(uid: u32) -> Result<Value> {
     let path = folder(uid)?.join("grant.json");
     let parent = files::directory(
@@ -176,6 +201,11 @@ pub fn load(uid: u32) -> Result<Value> {
     )?;
     json::decode(&data, 65536)
 }
+/// Revoke `uid`'s grant.
+///
+/// # Errors
+///
+/// Fails unless run as Root, or when removal is uncertain.
 #[allow(
     unsafe_code,
     reason = "Linux syscall ABI (fstatat, geteuid, unlinkat)."
@@ -221,6 +251,11 @@ pub fn revoke(uid: u32) -> Result<()> {
     held.sync_all()?;
     Ok(())
 }
+/// Validate and publish `value` as `uid`'s grant.
+///
+/// # Errors
+///
+/// Fails unless run as Root, or when the grant is invalid or noncanonical.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn publish(value: &Value, uid: u32, boot: &str, addresses: &BTreeSet<IpAddr>) -> Result<()> {
     // SAFETY: geteuid has no preconditions and cannot fail.

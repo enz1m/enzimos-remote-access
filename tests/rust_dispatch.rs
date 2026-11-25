@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access dispatch handling.
 use enzimos_remote_access::dispatch;
 use serde_json::json;
 #[test]

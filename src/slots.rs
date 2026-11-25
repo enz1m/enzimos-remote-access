@@ -3,10 +3,12 @@
 use enzimos_platform::{Error, Result};
 use std::sync::Arc;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
+/// Bounded request slots shared by the dispatchers.
 pub struct Slots {
     semaphore: Arc<Semaphore>,
     changed: Notify,
 }
+/// A held request slot, released on drop.
 pub struct Permit {
     permit: Option<OwnedSemaphorePermit>,
     slots: Arc<Slots>,
@@ -18,12 +20,18 @@ impl Drop for Permit {
     }
 }
 impl Slots {
+    /// Empty slots.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             semaphore: Arc::new(Semaphore::new(8)),
             changed: Notify::new(),
         })
     }
+    /// Take a slot.
+    ///
+    /// # Errors
+    ///
+    /// Fails when every slot is in use.
     pub fn acquire(self: &Arc<Self>) -> Result<Permit> {
         let permit = std::sync::Arc::clone(&self.semaphore)
             .try_acquire_owned()
@@ -33,9 +41,11 @@ impl Slots {
             slots: std::sync::Arc::clone(self),
         })
     }
+    /// Whether no slot is in use.
     pub fn idle(&self) -> bool {
         self.semaphore.available_permits() == 8
     }
+    /// Wait until no slot is in use.
     pub async fn settled(&self) {
         loop {
             let wait = self.changed.notified();

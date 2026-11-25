@@ -23,6 +23,11 @@ use std::{
     time::{Duration, Instant},
 };
 use zbus::Connection;
+/// Require running as Root in the initial mount and network namespaces.
+///
+/// # Errors
+///
+/// Fails in any other context.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn root_context() -> Result<()> {
     require(
@@ -141,6 +146,7 @@ fn uid(v: &Value) -> Result<u32> {
         .filter(|n| (1000..u32::MAX).contains(n))
         .ok_or_else(|| Error("remote-account-unavailable".into()))
 }
+/// The SSH provider.
 pub struct Ssh {
     bus: Connection,
     state: State,
@@ -151,6 +157,11 @@ pub struct Ssh {
     boot: String,
 }
 impl Ssh {
+    /// Open the provider on `connection`.
+    ///
+    /// # Errors
+    ///
+    /// Fails outside the root context or when a dependency is unavailable.
     pub async fn new(connection: Connection) -> Result<Self> {
         root_context()?;
         for path in ["/var/lib/enzimos/remote", "/var/lib/enzimos/remote/ssh"] {

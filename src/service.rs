@@ -24,7 +24,9 @@ use zbus::{
     fdo::{RequestNameFlags, RequestNameReply},
     message::{Flags, Type},
 };
+/// Well-known bus name of the service.
 pub const NAME: &str = "org.enzimos.Remote1";
+/// Object path of the service.
 pub const PATH: &str = "/org/enzimos/Remote1";
 const METHODS: [(&str, bool); 13] = [
     ("GetCapabilities", false),
@@ -41,11 +43,21 @@ const METHODS: [(&str, bool); 13] = [
     ("ReviewDesktopUnattended", true),
     ("SetDesktopUnattended", true),
 ];
+/// One admitted method call.
 pub struct Call {
+    /// Method name.
     pub member: &'static str,
+    /// Unique bus name of the caller.
     pub sender: String,
+    /// JSON request body, when the method takes one.
     pub body: Option<String>,
 }
+/// Admit a method call by path, interface, member, signature and sender.
+///
+/// # Errors
+///
+/// Fails for unknown methods, wrong signatures, no-reply calls, non-unique senders or oversized
+/// bodies.
 pub fn validate(message: &Message) -> Result<Call> {
     let header = message.header();
     require(
@@ -104,14 +116,20 @@ pub fn validate(message: &Message) -> Result<Call> {
         body,
     })
 }
+/// Request handler served by [`serve`].
 pub trait Handler: Send + Sync + 'static {
+    /// Handle one admitted call.
     fn handle(&self, call: Call) -> impl Future<Output = Result<Value>> + Send;
+    /// Whether no request is in progress.
     fn idle(&self) -> bool;
+    /// Wait until in-flight work is settled.
     fn settled(&self) -> impl Future<Output = ()> + Send;
+    /// Drop state bound to `_connection` before reconnecting.
     fn invalidate(&self, _connection: &Connection) -> impl Future<Output = Result<()>> + Send {
         async { Ok(()) }
     }
 }
+/// The production handler for the remote-access service.
 pub struct Api {
     ssh: dispatch::Dispatcher<Ssh>,
     desktop: desktop_dispatch::Dispatcher<Desktop>,
@@ -119,6 +137,11 @@ pub struct Api {
     desktop_observers: Mutex<BTreeMap<String, Value>>,
 }
 impl Api {
+    /// Open the production handler on `connection`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a provider cannot be opened.
     pub async fn new(connection: Connection) -> Result<Self> {
         let authority = Authority::new(connection.clone()).await?;
         let slots = Slots::new();
@@ -243,6 +266,7 @@ impl Handler for Api {
         Ok(())
     }
 }
+/// Capabilities of this installation.
 pub fn capabilities() -> Value {
     use std::os::unix::fs::MetadataExt;
     let available = [
@@ -293,6 +317,11 @@ async fn reply(connection: &Connection, message: &Message, result: Result<Value>
         }
     }
 }
+/// Serve calls from `stream` until idle for `idle`.
+///
+/// # Errors
+///
+/// Fails when `idle` is out of bounds, the bus name cannot be held, or the bus disconnects.
 pub async fn serve<H: Handler>(
     mut stream: MessageStream,
     handler: H,

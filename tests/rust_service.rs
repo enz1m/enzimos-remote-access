@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access service handling.
 use enzimos_remote_access::{desktop_provider, service};
 use serde_json::json;
 use zbus::{Message, message::Flags};

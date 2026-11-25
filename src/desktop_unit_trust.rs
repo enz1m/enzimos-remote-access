@@ -7,15 +7,23 @@ use crate::{
 use enzimos_platform::{Error, Result, require};
 use std::path::Path;
 use zbus::zvariant::OwnedValue;
+/// Installed desktop-sharing unit template.
 pub const TEMPLATE: &str = "/usr/lib/systemd/system/enzimos-desktop-sharing@.service";
 /// The per-account watcher that starts unattended sharing after sign-in.
 pub const AUTOSTART_TEMPLATE: &str =
     "/usr/lib/systemd/system/enzimos-desktop-sharing-autostart@.service";
+/// Installed desktop worker.
 pub const WORKER: &str = "/usr/lib/enzimos-remote/desktop-worker";
 const NATIVE_TEMPLATE: &[u8] = include_bytes!("../packaging/enzimos-desktop-sharing@.service");
+/// Whether `bytes` match the packaged unit template.
 pub fn native_template(bytes: &[u8]) -> bool {
     bytes == NATIVE_TEMPLATE
 }
+/// Whether the installed template matches the packaged one.
+///
+/// # Errors
+///
+/// Fails when the template cannot be read.
 pub fn installed_template_matches() -> Result<bool> {
     crate::desktop_binding::installed(Path::new(TEMPLATE))?;
     let bytes = enzimos_platform::files::read(Path::new(TEMPLATE), 128 * 1024, Some(0), true)?;
@@ -30,6 +38,11 @@ fn field<T: TryFrom<OwnedValue>>(p: &Properties, key: &str) -> Result<T> {
     )
     .map_err(|_| Error("desktop-system-unit-untrusted".into()))
 }
+/// Validate the unit and service properties of `uid`'s sharing unit.
+///
+/// # Errors
+///
+/// Fails when a property differs from the packaged unit.
 pub fn validate(unit: &Properties, service: &Properties, uid: u32) -> Result<Snapshot> {
     desktop_grant::account(uid)?;
     let snapshot = system::snapshot(unit, service)?;
@@ -67,6 +80,11 @@ pub fn validate(unit: &Properties, service: &Properties, uid: u32) -> Result<Sna
     )?;
     Ok(snapshot)
 }
+/// Validated properties of `uid`'s sharing unit.
+///
+/// # Errors
+///
+/// Fails when systemd cannot be queried or the unit is untrusted.
 pub async fn properties(system: &system::System, uid: u32) -> Result<Snapshot> {
     let (unit, service) = system.raw_properties().await?;
     let result = validate(&unit, &service, uid)?;

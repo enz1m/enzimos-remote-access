@@ -6,14 +6,25 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
+/// One TCP socket from `/proc/net/tcp*`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Socket {
+    /// Local address.
     pub address: IpAddr,
+    /// Local port.
     pub port: u16,
+    /// Remote address.
     pub remote_address: IpAddr,
+    /// Remote port.
     pub remote_port: u16,
+    /// Kernel state code.
     pub state: String,
 }
+/// Decode a hex `address:port` field.
+///
+/// # Errors
+///
+/// Fails when the field is malformed.
 pub fn endpoint(value: &str) -> Result<(IpAddr, u16)> {
     let (address, port) = value
         .split_once(':')
@@ -52,6 +63,11 @@ pub fn endpoint(value: &str) -> Result<(IpAddr, u16)> {
         u16::from_str_radix(port, 16).map_err(|_| Error("tcp-observation-invalid".into()))?;
     Ok((ip, port))
 }
+/// Parse a `/proc/net/tcp*` body into sockets by inode.
+///
+/// # Errors
+///
+/// Fails when the body is too large or a row is malformed or repeated.
 pub fn parse(body: &str) -> Result<BTreeMap<u64, Socket>> {
     require(
         body.len() <= 4 * 1024 * 1024 && !body.contains('\0'),
@@ -108,6 +124,11 @@ pub fn parse(body: &str) -> Result<BTreeMap<u64, Socket>> {
     }
     Ok(table)
 }
+/// TCP sockets of this network namespace by inode.
+///
+/// # Errors
+///
+/// Fails when a table cannot be read or an inode repeats.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getpid).")]
 pub fn table() -> Result<BTreeMap<u64, Socket>> {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -131,6 +152,11 @@ pub fn table() -> Result<BTreeMap<u64, Socket>> {
     }
     Ok(table)
 }
+/// Socket inodes open in process `pid` of `uid`.
+///
+/// # Errors
+///
+/// Fails when the process descriptors cannot be read or exceed the bound.
 #[allow(unsafe_code, reason = "Linux syscall ABI (readlinkat).")]
 pub fn inodes(pid: u32, uid: u32) -> Result<BTreeSet<u64>> {
     use std::os::fd::AsRawFd;
@@ -179,6 +205,11 @@ pub fn inodes(pid: u32, uid: u32) -> Result<BTreeSet<u64>> {
     }
     Ok(owned)
 }
+/// Inode of a `socket:[N]` link target, or `None` for other targets.
+///
+/// # Errors
+///
+/// Fails when a socket link is malformed.
 pub fn socket_link(value: &str) -> Result<Option<u64>> {
     if !value.starts_with("socket:[") {
         return Ok(None);
@@ -197,6 +228,7 @@ pub fn socket_link(value: &str) -> Result<Option<u64>> {
     require(id > 0, "socket-descriptor-invalid")?;
     Ok(Some(id))
 }
+/// Whether one of `owned` listens on `address`:`port`.
 pub fn listening(
     table: &BTreeMap<u64, Socket>,
     owned: &BTreeSet<u64>,

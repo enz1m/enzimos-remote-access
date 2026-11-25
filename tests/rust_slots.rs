@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the remote-access slots handling.
 use enzimos_remote_access::slots::Slots;
 use std::{
     sync::{Arc, Barrier},

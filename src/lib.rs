@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
+//! SSH hosting and desktop sharing for enzimOS, with the service, client and unit entry points.
 pub mod bus_adapter;
 pub mod client;
 pub mod compositor_grant;
+/// Validation and rendering of remote-access configurations.
 pub mod config;
 pub mod connections;
 pub mod controller;
@@ -26,8 +28,11 @@ pub mod firewall;
 pub mod firewall_bus;
 pub mod firewall_journal;
 pub mod firewall_lease;
+/// SSH public key validation.
 pub mod keys;
+/// Desktop-sharing listener reservation and handoff.
 pub mod listener;
+/// Local addresses, interfaces and the reviewed network identity.
 pub mod network;
 pub mod notify;
 pub mod service;
@@ -36,5 +41,6 @@ pub mod slots;
 pub mod sockets;
 pub mod ssh_files;
 pub mod ssh_provider;
+/// Approval record of the SSH provider.
 pub mod state;
 pub mod system;

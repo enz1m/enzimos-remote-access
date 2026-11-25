@@ -51,12 +51,18 @@ fn binding(record: &Value) -> Result<String> {
         "configuration": record["configuration"],
     }))
 }
+/// The approval record of the SSH provider.
 pub struct State {
     directory: PathBuf,
     owner: u32,
     boot_id: String,
 }
 impl State {
+    /// Open the record in `directory`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the directory cannot be created.
     pub fn new(directory: &Path, owner: u32, boot_id: String) -> Result<Self> {
         files::ensure_directory(directory, 0o700, owner)?;
         Ok(Self {

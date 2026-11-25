@@ -9,9 +9,13 @@ use std::{
     time::Duration,
 };
 use zeroize::Zeroizing;
+/// Where the SSH provider keeps its state and configuration.
 pub struct Layout {
+    /// Private state directory holding the host key.
     pub state: PathBuf,
+    /// Directory of the generated sshd configuration.
     pub configuration: PathBuf,
+    /// Owner of the state files.
     pub owner: u32,
 }
 impl Default for Layout {
@@ -100,6 +104,12 @@ fn public(data: &[u8]) -> Result<Value> {
     keys::public_key(&format!("{} {}", words[0], words[1]))
 }
 impl Layout {
+    /// OpenSSH host identity line, creating the host key once.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the key cannot be created, a prior creation was interrupted, or the key is
+    /// invalid.
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub fn host_identity(&self) -> Result<String> {
         require(
@@ -195,6 +205,11 @@ impl Layout {
             .ok_or_else(|| Error("host-key-fingerprint".into()))?
             .to_owned())
     }
+    /// Public host key, when one exists.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the key file is invalid.
     pub fn public_host_key(&self) -> Result<Option<String>> {
         files::read_optional(
             &self.state.join("host_ed25519.pub"),
@@ -210,6 +225,11 @@ impl Layout {
         })
         .transpose()
     }
+    /// Validate `configuration` and render the files to publish.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the account or a public key is invalid, or rendering fails.
     pub fn prepare(&self, configuration: &Value) -> Result<Prepared> {
         let rendered = config::render_ssh(configuration)?;
         let account = configuration["account"]
@@ -282,6 +302,11 @@ impl Layout {
             fingerprint,
         })
     }
+    /// Atomically publish `prepared`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the host identity changed or a file cannot be written.
     pub fn publish(&self, prepared: Prepared) -> Result<()> {
         require(
             config::render_ssh(&prepared.configuration)? == prepared.rendered
@@ -307,10 +332,12 @@ impl Layout {
         )
     }
 }
+/// Rendered SSH configuration ready to publish.
 pub struct Prepared {
     configuration: Value,
     rendered: String,
     keys: String,
     account: String,
+    /// Host key fingerprint the configuration was rendered for.
     pub fingerprint: String,
 }

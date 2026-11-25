@@ -213,6 +213,11 @@ fn protected_proc(pid: u32, uid: u32) -> Result<bool> {
     )?;
     Ok(metadata.uid() == 0)
 }
+/// Whether the RDP worker of `main_pid` listens on `address`:`port` for `uid`.
+///
+/// # Errors
+///
+/// Fails when a worker child is invalid or changed.
 pub fn listening(
     uid: u32,
     main_pid: u32,

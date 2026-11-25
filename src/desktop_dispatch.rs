@@ -51,12 +51,14 @@ impl Drop for Alive {
         self.0.store(false, Ordering::Release);
     }
 }
+/// Dispatches authorized desktop-sharing requests to the provider.
 pub struct Dispatcher<P> {
     authority: Authority,
     provider: Arc<Mutex<P>>,
     slots: Arc<Slots>,
 }
 impl<P: Reviewed> Dispatcher<P> {
+    /// A dispatcher sharing `slots`.
     pub fn new(authority: Authority, provider: P, slots: Arc<Slots>) -> Self {
         Self {
             authority,
@@ -67,6 +69,11 @@ impl<P: Reviewed> Dispatcher<P> {
     fn permit(&self) -> Result<Permit> {
         self.slots.acquire()
     }
+    /// State for the caller `sender`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the caller has no session, the provider is busy, or the session changed.
     pub async fn query(&self, sender: &str) -> Result<Value> {
         let permit = self.permit()?;
         let peer = self.authority.peer(sender).await?;
@@ -120,12 +127,23 @@ impl<P: Reviewed> Dispatcher<P> {
         .await
         .map_err(|_| Error("remote-provider-unavailable".into()))?
     }
+    /// Review a sharing, stop or unattended-access request from `sender`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the request is invalid or the provider fails.
     pub async fn review(&self, body: &str, sender: &str, operation: Operation) -> Result<Value> {
         let (review, _, _permit) = self
             .reviewed(body, sender, operation, self.permit()?)
             .await?;
         Ok(review)
     }
+    /// Apply a reviewed sharing, stop or unattended-access request from `sender` after
+    /// polkit approval.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the review is stale, authorization is refused, or the provider fails.
     pub async fn mutate(&self, body: &str, sender: &str, operation: Operation) -> Result<Value> {
         let arrived = Instant::now();
         let permit = self.permit()?;

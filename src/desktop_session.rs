@@ -15,6 +15,7 @@ use zbus::{
     Connection,
     zvariant::{OwnedObjectPath, OwnedValue},
 };
+/// D-Bus properties of one logind interface, by name.
 pub type Properties = HashMap<String, OwnedValue>;
 fn field<T: TryFrom<OwnedValue>>(p: &Properties, key: &str) -> Result<T> {
     require(p.len() <= 512, "desktop-session-property-bound")?;
@@ -55,6 +56,11 @@ fn identity(p: &Properties, uid: u32, id: &str) -> Result<Value> {
     )?;
     Ok(value!({"uid":uid,"id":id,"leader":leader,"seat":seat.0}))
 }
+/// JSON proof that session `id` of `uid` is active and unlocked.
+///
+/// # Errors
+///
+/// Fails when the session is not an active, unlocked local session.
 pub fn session(p: &Properties, uid: u32, id: &str) -> Result<Value> {
     let observed = identity(p, uid, id)?;
     for (key, expected) in [("Active", true), ("LockedHint", false)] {
@@ -65,7 +71,13 @@ pub fn session(p: &Properties, uid: u32, id: &str) -> Result<Value> {
     }
     Ok(observed)
 }
-/// Classify a completed revocation; this never grants permission to capture.
+/// Whether the session bound in `bound` is now locked.
+///
+/// Classifies a completed revocation; this never grants permission to capture.
+///
+/// # Errors
+///
+/// Fails when `bound` is invalid or the session changed.
 pub fn locked(p: &Properties, bound: &Value) -> Result<bool> {
     let uid = bound["uid"]
         .as_u64()
@@ -85,15 +97,22 @@ pub fn locked(p: &Properties, bound: &Value) -> Result<bool> {
     let _: bool = field(p, "Active")?;
     field(p, "LockedHint")
 }
+/// Logind and systemd on the system bus, pinned to their owners.
 #[derive(Clone)]
 pub struct Session {
     login: Pinned,
     system: Pinned,
 }
 impl Session {
+    /// Unique bus name of logind.
     pub fn login_owner(&self) -> &str {
         self.login.owner()
     }
+    /// Object path of session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the id is invalid or logind refuses.
     pub async fn session_path(&self, id: &str) -> Result<OwnedObjectPath> {
         require(identifier(id), "desktop-session-proof-invalid")?;
         let path: OwnedObjectPath = self
@@ -113,16 +132,31 @@ impl Session {
         )?;
         Ok(path)
     }
+    /// Pin the logind and systemd owners on `connection`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when either service is unavailable.
     pub async fn new(connection: Connection) -> Result<Self> {
         Ok(Self {
             login: Pinned::new(connection.clone(), "org.freedesktop.login1").await?,
             system: Pinned::new(connection, "org.freedesktop.systemd1").await?,
         })
     }
+    /// Verify logind and systemd still have their pinned owners.
+    ///
+    /// # Errors
+    ///
+    /// Fails when an owner changed.
     pub async fn recheck_owners(&self) -> Result<()> {
         self.login.recheck().await?;
         self.system.recheck().await
     }
+    /// Whether the session bound in `bound` is now locked.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `bound` is invalid or the session cannot be read.
     pub async fn locked(&self, bound: &Value) -> Result<bool> {
         self.recheck_owners().await?;
         let id = bound["id"]
@@ -137,6 +171,10 @@ impl Session {
     }
     /// The compositor may revoke capture before its asynchronous logind update.
     /// Called only after the capture child has been reaped, never during capture.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `bound` is invalid or the session cannot be read.
     pub async fn locked_after_capture_stop(&self, bound: &Value) -> Result<bool> {
         // The acknowledged lock publisher allows three seconds for its logind call.
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -159,6 +197,11 @@ impl Session {
         )
         .await
     }
+    /// Properties of session `id` of `uid`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the id is invalid or logind refuses.
     pub async fn values(&self, uid: u32, id: &str) -> Result<Value> {
         require(identifier(id), "desktop-session-proof-invalid")?;
         let path: OwnedObjectPath = self
@@ -218,6 +261,11 @@ impl Session {
         )?;
         Ok((!display.0.is_empty()).then_some(display.0))
     }
+    /// PID of the user manager of `uid` for session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Fails unless the caller is Root, or when logind refuses.
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub async fn manager_pid(&self, uid: u32, id: &str) -> Result<u32> {
         require(
@@ -332,6 +380,11 @@ impl Session {
         self.recheck_owners().await?;
         Ok(pid)
     }
+    /// Verify the granted session in `bound` and retain its leader.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the session changed or cannot be observed.
     pub async fn verify_granted(&self, bound: &Value) -> Result<Retained> {
         let uid = bound["uid"]
             .as_u64()
@@ -367,6 +420,11 @@ impl Session {
         )?;
         Ok(retained)
     }
+    /// Verify the session in `bound` and retain its leader.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the session changed or cannot be observed.
     pub async fn verify(&self, bound: &Value) -> Result<Retained> {
         let uid = bound["uid"]
             .as_u64()
@@ -382,6 +440,11 @@ impl Session {
         .await?;
         self.verify_granted(bound).await
     }
+    /// Discover the compositor of session `id` of `uid`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the session has no owned compositor or a bound is exceeded.
     pub async fn discover(&self, uid: u32, id: &str) -> Result<Value> {
         let base = self.values(uid, id).await?;
         let manager = self.manager_pid(uid, id).await?;

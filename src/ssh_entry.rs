@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Entry point of the SSH listener, firewall guard and retry units.
 use enzimos_platform::{Error, Result, require};
 #[allow(
     unsafe_code,

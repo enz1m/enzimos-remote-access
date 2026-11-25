@@ -26,12 +26,19 @@ fn hash(bytes: &[u8]) -> String {
 /// Deliberately has no Debug/Serialize implementation: passwords are private.
 pub struct Identity {
     password: Zeroizing<String>,
+    /// SHA-256 fingerprint of the TLS certificate.
     pub certificate_sha256_fingerprint: String,
 }
 impl Identity {
+    /// RDP server TLS configuration for the identity in `directory`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the path or password is invalid.
     pub fn tls_config(&self, directory: &Path) -> Result<Zeroizing<Vec<u8>>> {
         config::tls_config(directory, &self.password).map(Zeroizing::new)
     }
+    /// RDP password.
     pub fn password(&self) -> &str {
         &self.password
     }
@@ -69,6 +76,11 @@ fn identity(m: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64, u32, u
         m.nlink(),
     )
 }
+/// Read the identity in `directory` of `uid`.
+///
+/// # Errors
+///
+/// Fails when a file has wrong permissions or the identity is invalid.
 pub fn read(directory: &Path, uid: u32) -> Result<Identity> {
     let held = files::directory(directory, Some(uid))?;
     let meta = held.metadata()?;
@@ -131,6 +143,11 @@ fn renewal_due(directory: &Path, uid: u32) -> Result<bool> {
     let horizon = crypto(Asn1Time::days_from_now(30))?;
     Ok(crypto(cert.not_after().compare(&horizon))? != std::cmp::Ordering::Greater)
 }
+/// Read the identity of `uid`, creating it when missing.
+///
+/// # Errors
+///
+/// Fails for a non-ordinary account, an incomplete or expired identity, or when creation fails.
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 pub fn ensure(directory: &Path, uid: u32) -> Result<Identity> {
     require(

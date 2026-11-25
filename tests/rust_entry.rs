@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the installed entry-point executables.
 use std::process::Command;
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
