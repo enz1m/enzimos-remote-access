@@ -12,23 +12,35 @@ use std::sync::{
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 use zbus::{Connection, MatchRule, Message, MessageStream, message::Type};
+const FIREWALLD: &str = "org.fedoraproject.FirewallD1";
 enum Kind {
     Changed,
     Removed(String),
-    Owners { login: String, firewall: String },
+    Owners {
+        login: Option<String>,
+        firewall: Option<String>,
+    },
+}
+enum Event {
+    Changed,
+    Lost,
+    FirewallMoved,
 }
 struct State {
     closed: AtomicBool,
     lost: AtomicBool,
+    moved: AtomicBool,
     sender: mpsc::Sender<()>,
 }
 impl State {
-    fn changed(&self, lost: bool) {
+    fn changed(&self, event: &Event) {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        if lost {
-            self.lost.store(true, Ordering::Release);
+        match event {
+            Event::Changed => {}
+            Event::Lost => self.lost.store(true, Ordering::Release),
+            Event::FirewallMoved => self.moved.store(true, Ordering::Release),
         }
         let _ = self.sender.try_send(());
     }
@@ -44,40 +56,79 @@ impl Drop for Watch {
     }
 }
 impl Watch {
+    /// Watches the session and follows firewalld while it starts, stops or restarts.
+    ///
+    /// # Errors
+    /// Fails when logind or the bus cannot be observed or logind's owner changes.
     pub async fn new(connection: &Connection, session: &Session, id: &str) -> Result<Self> {
         let path = session.session_path(id).await?;
-        let firewall = Pinned::new(connection.clone(), "org.fedoraproject.FirewallD1").await?;
+        let firewall = Pinned::if_running(connection.clone(), FIREWALLD).await?;
         let watch = Self::subscribe(
             connection,
             session.login_owner(),
-            firewall.owner(),
+            firewall.as_ref().map(Pinned::owner),
             path.as_str(),
             id,
         )
         .await?;
         session.recheck_owners().await?;
-        firewall.recheck().await?;
+        watch.settle_firewall(connection, firewall.as_ref()).await?;
         Ok(watch)
     }
     /// Also permits owned private-bus fixtures to prove the subscription boundary.
     pub async fn subscribe(
         connection: &Connection,
         login: &str,
-        firewall: &str,
+        firewall: Option<&str>,
         path: &str,
         id: &str,
     ) -> Result<Self> {
         require(
             login.starts_with(':')
-                && firewall.starts_with(':')
+                && firewall.is_none_or(|owner| owner.starts_with(':'))
                 && path.starts_with("/org/freedesktop/login1/session/")
                 && id.len() <= 64,
             "desktop-watch-authority-invalid",
         )?;
+        let rules = rules(login, firewall, path, id)
+            .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
+        Self::spawn(connection, rules).await
+    }
+    /// Watches only firewalld, for a guard that keeps a listener's firewall lease.
+    ///
+    /// Reports a change when firewalld starts, stops, restarts or signals.
+    ///
+    /// # Errors
+    /// Fails when the bus cannot be observed.
+    pub async fn firewall(connection: &Connection) -> Result<Self> {
+        let firewall = Pinned::if_running(connection.clone(), FIREWALLD).await?;
+        let rules = firewall_rules(None, firewall.as_ref().map(Pinned::owner))
+            .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
+        let watch = Self::spawn(connection, rules).await?;
+        watch.settle_firewall(connection, firewall.as_ref()).await?;
+        Ok(watch)
+    }
+    // An owner change between the first read and the subscription has no event of its own.
+    async fn settle_firewall(
+        &self,
+        connection: &Connection,
+        pinned: Option<&Pinned>,
+    ) -> Result<()> {
+        let current = Pinned::if_running(connection.clone(), FIREWALLD).await?;
+        if current.as_ref().map(Pinned::owner) != pinned.map(Pinned::owner) {
+            self.state.changed(&Event::FirewallMoved);
+        }
+        Ok(())
+    }
+    async fn spawn(
+        connection: &Connection,
+        rules: Vec<(MatchRule<'static>, Kind)>,
+    ) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(1);
         let state = Arc::new(State {
             closed: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            moved: AtomicBool::new(false),
             sender,
         });
         let mut watch = Self {
@@ -85,8 +136,6 @@ impl Watch {
             receiver,
             tasks: Vec::new(),
         };
-        let rules = rules(login, firewall, path, id)
-            .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
         for (rule, kind) in rules {
             let mut stream =
                 bounded(MessageStream::for_match_rule(rule, connection, Some(32)), 2).await?;
@@ -98,20 +147,20 @@ impl Watch {
                     }
                     match message {
                         Ok(message) => match classify(&message, &kind) {
-                            Ok(Some(lost)) => state.changed(lost),
+                            Ok(Some(event)) => state.changed(&event),
                             Ok(None) => {}
                             Err(_) => {
-                                state.changed(true);
+                                state.changed(&Event::Lost);
                                 break;
                             }
                         },
                         Err(_) => {
-                            state.changed(true);
+                            state.changed(&Event::Lost);
                             break;
                         }
                     }
                 }
-                state.changed(true);
+                state.changed(&Event::Lost);
             }));
         }
         Ok(watch)
@@ -130,6 +179,12 @@ impl Watch {
     pub fn lost(&self) -> bool {
         self.state.lost.load(Ordering::Acquire)
     }
+    /// Whether firewalld started, stopped or restarted since this watch subscribed.
+    ///
+    /// Signals from a new firewalld owner reach only a new watch.
+    pub fn firewall_moved(&self) -> bool {
+        self.state.moved.load(Ordering::Acquire)
+    }
     pub fn retire(&mut self) {
         self.state.closed.store(true, Ordering::Release);
         self.receiver.close();
@@ -138,15 +193,15 @@ impl Watch {
         }
     }
 }
-fn classify(message: &Message, kind: &Kind) -> Result<Option<bool>> {
+fn classify(message: &Message, kind: &Kind) -> Result<Option<Event>> {
     match kind {
-        Kind::Changed => Ok(Some(false)),
+        Kind::Changed => Ok(Some(Event::Changed)),
         Kind::Removed(id) => {
             let (removed, _): (String, zbus::zvariant::OwnedObjectPath) = message
                 .body()
                 .deserialize()
                 .map_err(|_| Error("desktop-session-event-invalid".into()))?;
-            Ok((removed == *id).then_some(true))
+            Ok((removed == *id).then_some(Event::Lost))
         }
         Kind::Owners { login, firewall } => {
             let (name, _, new): (String, String, String) = message
@@ -154,8 +209,12 @@ fn classify(message: &Message, kind: &Kind) -> Result<Option<bool>> {
                 .deserialize()
                 .map_err(|_| Error("desktop-owner-event-invalid".into()))?;
             Ok(match name.as_str() {
-                "org.freedesktop.login1" => (new != *login).then_some(true),
-                "org.fedoraproject.FirewallD1" => (new != *firewall).then_some(true),
+                "org.freedesktop.login1" => login
+                    .as_ref()
+                    .and_then(|login| (new != *login).then_some(Event::Lost)),
+                FIREWALLD => {
+                    (new != firewall.as_deref().unwrap_or_default()).then_some(Event::FirewallMoved)
+                }
                 _ => None,
             })
         }
@@ -164,12 +223,12 @@ fn classify(message: &Message, kind: &Kind) -> Result<Option<bool>> {
 
 fn rules(
     login: &str,
-    firewall: &str,
+    firewall: Option<&str>,
     path: &str,
     id: &str,
 ) -> zbus::Result<Vec<(MatchRule<'static>, Kind)>> {
     let build = || MatchRule::builder().msg_type(Type::Signal);
-    let rules = vec![
+    let mut rules = vec![
         (
             build()
                 .sender(login)?
@@ -191,27 +250,37 @@ fn rules(
                 .to_owned(),
             Kind::Removed(id.into()),
         ),
-        (
-            build()
-                .sender("org.freedesktop.DBus")?
-                .path("/org/freedesktop/DBus")?
-                .interface("org.freedesktop.DBus")?
-                .member("NameOwnerChanged")?
-                .build()
-                .to_owned(),
-            Kind::Owners {
-                login: login.into(),
-                firewall: firewall.into(),
-            },
-        ),
-        (
+    ];
+    rules.extend(firewall_rules(Some(login), firewall)?);
+    Ok(rules)
+}
+fn firewall_rules(
+    login: Option<&str>,
+    firewall: Option<&str>,
+) -> zbus::Result<Vec<(MatchRule<'static>, Kind)>> {
+    let build = || MatchRule::builder().msg_type(Type::Signal);
+    let mut rules = vec![(
+        build()
+            .sender("org.freedesktop.DBus")?
+            .path("/org/freedesktop/DBus")?
+            .interface("org.freedesktop.DBus")?
+            .member("NameOwnerChanged")?
+            .build()
+            .to_owned(),
+        Kind::Owners {
+            login: login.map(Into::into),
+            firewall: firewall.map(Into::into),
+        },
+    )];
+    if let Some(firewall) = firewall {
+        rules.push((
             build()
                 .sender(firewall)?
                 .path("/org/fedoraproject/FirewallD1")?
                 .build()
                 .to_owned(),
             Kind::Changed,
-        ),
-    ];
+        ));
+    }
     Ok(rules)
 }

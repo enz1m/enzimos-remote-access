@@ -2,6 +2,9 @@
 use enzimos_remote_access::desktop_unit_trust;
 use serde_json::Value;
 const DESKTOP: &str = include_str!("../packaging/enzimos-desktop-sharing@.service");
+const SSH: &str = include_str!("../packaging/enzimos-sshd.service");
+const SSH_GUARD: &str = include_str!("../packaging/enzimos-sshd-firewall.service");
+const DESKTOP_GUARD: &str = include_str!("../packaging/enzimos-desktop-sharing-firewall@.service");
 fn fields(body: &str, key: &str) -> Vec<String> {
     body.lines()
         .filter_map(|line| line.strip_prefix(&format!("{key}=")))
@@ -33,7 +36,6 @@ fn native_desktop_template_preserves_privileged_cleanup_and_original_listener_re
         ("NotifyAccess", "exec"),
         ("FileDescriptorStoreMax", "1"),
         ("FileDescriptorStorePreserve", "yes"),
-        ("BindsTo", "firewalld.service"),
         ("NoNewPrivileges", "yes"),
     ] {
         assert_eq!(fields(DESKTOP, key), [expected]);
@@ -43,6 +45,44 @@ fn native_desktop_template_preserves_privileged_cleanup_and_original_listener_re
         ["desktop-config:/run/enzimos-remote/sharing/%i/grant.json"]
     );
     assert!(fields(DESKTOP, "WantedBy").is_empty());
+}
+#[test]
+fn listeners_and_their_firewall_guards_stop_together_but_outlive_firewalld() {
+    for (unit, peer) in [
+        (SSH, "enzimos-sshd-firewall.service"),
+        (SSH_GUARD, "enzimos-sshd.service"),
+        (DESKTOP, "enzimos-desktop-sharing-firewall@%i.service"),
+        (DESKTOP_GUARD, "enzimos-desktop-sharing@%i.service"),
+    ] {
+        assert_eq!(fields(unit, "BindsTo"), [peer]);
+        assert_eq!(fields(unit, "Restart"), ["no"]);
+        assert_eq!(fields(unit, "Requires"), ["dbus.service"]);
+        assert!(
+            fields(unit, "After")
+                .iter()
+                .any(|after| after.split_whitespace().any(|u| u == "firewalld.service")),
+            "unit is not ordered after firewalld"
+        );
+        for key in ["Wants", "PartOf", "Requisite"] {
+            assert!(
+                fields(unit, key).iter().all(|v| !v.contains("firewalld")),
+                "{key}= couples a listener to firewalld"
+            );
+        }
+    }
+    assert_eq!(
+        fields(SSH, "ExecStartPost"),
+        ["/usr/lib/enzimos-remote/ssh-entry verify"]
+    );
+    assert_eq!(
+        fields(SSH_GUARD, "ExecStart"),
+        ["/usr/lib/enzimos-remote/ssh-entry watch"]
+    );
+    assert_eq!(
+        fields(DESKTOP_GUARD, "ExecStart"),
+        ["/usr/lib/enzimos-remote/desktop-entry watch %i"]
+    );
+    assert!(fields(DESKTOP_GUARD, "User").is_empty());
 }
 #[test]
 fn all_unit_commands_resolve_to_packaged_binaries() {
@@ -56,11 +96,20 @@ fn all_unit_commands_resolve_to_packaged_binaries() {
         .collect();
     for body in [
         DESKTOP,
-        include_str!("../packaging/enzimos-sshd.service"),
+        SSH,
+        SSH_GUARD,
+        DESKTOP_GUARD,
+        include_str!("../packaging/enzimos-sshd-retry.service"),
         include_str!("../packaging/enzimos-remote-access.service"),
         include_str!("../packaging/org.enzimos.Remote1.service"),
     ] {
-        for key in ["Exec", "ExecStart", "ExecStartPre", "ExecStopPost"] {
+        for key in [
+            "Exec",
+            "ExecStart",
+            "ExecStartPre",
+            "ExecStartPost",
+            "ExecStopPost",
+        ] {
             for command in fields(body, key) {
                 let program = command
                     .trim_start_matches('+')

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=enzimOS SSH sharing firewall guard
+BindsTo=enzimos-sshd.service
+After=dbus.service firewalld.service enzimos-sshd.service
+Requires=dbus.service
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/enzimos-remote/ssh-entry watch
+Restart=no
+UMask=0077
+TimeoutStopSec=15s
+StandardOutput=journal
+StandardError=journal

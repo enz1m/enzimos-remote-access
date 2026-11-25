@@ -3,6 +3,7 @@
 use crate::{
     bus_adapter::Pinned,
     firewall::{self, Interface, Rule},
+    firewall_journal::Journal,
     network,
 };
 use enzimos_platform::{Error, Result, require};
@@ -82,6 +83,17 @@ impl Firewall {
                     .ok_or_else(|| Error("remote-firewall-inactive".into()))
             })
             .await
+    }
+    /// Whether firewalld is running, binding this handle to its owner when it is.
+    ///
+    /// # Errors
+    /// Fails when the bus cannot answer.
+    pub async fn running(&self) -> Result<bool> {
+        match self.bus().await {
+            Ok(_) => Ok(true),
+            Err(error) if error.0 == "remote-firewall-inactive" => Ok(false),
+            Err(error) => Err(error),
+        }
     }
     pub async fn zone_for(&self, interface: &str) -> Result<String> {
         require(
@@ -215,6 +227,23 @@ impl Firewall {
                 .await?
         };
         require(zone == row.zone, "firewall-zone-changed")
+    }
+}
+impl Journal<'_, Firewall> {
+    /// Releases the owned rules, or forgets them while firewalld is not running.
+    ///
+    /// Returns whether firewalld is running.
+    ///
+    /// # Errors
+    /// Fails when a running firewalld does not confirm removal.
+    pub fn release_or_forget(&mut self) -> Result<bool> {
+        if self.interface.runtime.block_on(self.interface.running())? {
+            self.release()?;
+            Ok(true)
+        } else {
+            self.forget()?;
+            Ok(false)
+        }
     }
 }
 // These synchronous adapters run inside the dispatcher's bounded blocking jobs,

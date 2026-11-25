@@ -1,8 +1,9 @@
 [Unit]
-BindsTo=firewalld.service
-After=firewalld.service
 Description=enzimOS approved encrypted desktop sharing
-Requires=dbus.service firewalld.service
+Requires=dbus.service
+# Each unit stops the other: sharing never runs without its firewall guard.
+# firewalld is only ordered: with it stopped, sharing stays up and unfiltered.
+BindsTo=enzimos-desktop-sharing-firewall@%i.service
 After=dbus.service firewalld.service
 
 [Service]

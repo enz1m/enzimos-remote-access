@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! Durable runtime-rule ownership precedes each mutation; borrowed rules stay.
-use crate::firewall::{Interface, Lease, Rule};
+use crate::firewall::{Interface, LEASE_RULES, Lease, Rule};
 use enzimos_platform::{Error, Result, files, json, require};
 use serde_json::{Value, json as value};
 use std::path::Path;
@@ -22,7 +22,7 @@ pub fn validate(v: &Value) -> Result<Vec<Rule>> {
     )?;
     let owned = v["owned"]
         .as_array()
-        .filter(|r| r.len() <= 17)
+        .filter(|r| r.len() <= LEASE_RULES)
         .ok_or_else(|| Error("firewall-journal-invalid".into()))?;
     let mut seen = std::collections::BTreeSet::new();
     owned
@@ -83,7 +83,10 @@ impl<I: Interface> Journal<'_, I> {
             self.load()?.is_empty(),
             "firewall-prior-lease-needs-cleanup",
         )?;
-        require((1..=17).contains(&desired.len()), "firewall-lease-bound")?;
+        require(
+            (1..=LEASE_RULES).contains(&desired.len()),
+            "firewall-lease-bound",
+        )?;
         validate(
             &value!({"schema":1,"boot_id":self.boot_id,"owned":desired.iter().map(|r|value!({"zone":r.zone,"rule":r.rule})).collect::<Vec<_>>()}),
         )?;
@@ -111,6 +114,18 @@ impl<I: Interface> Journal<'_, I> {
             return Err(error);
         }
         Ok(lease)
+    }
+    /// Drops the ownership records without touching the provider.
+    ///
+    /// Only for a firewalld that is not running: it discards runtime rules when it stops.
+    ///
+    /// # Errors
+    /// Fails when the journal cannot be read or rewritten.
+    pub fn forget(&mut self) -> Result<()> {
+        if self.load()?.is_empty() {
+            return Ok(());
+        }
+        self.save(&[])
     }
     pub fn release(&mut self) -> Result<()> {
         let mut owned = self.load()?;

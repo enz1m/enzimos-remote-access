@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! A run-only Root grant binds a boot, account, compositor and network approval.
-use crate::config;
+use crate::{config, firewall_bus::Firewall, network};
 use enzimos_platform::{Error, Result, files, json, require};
 use serde_json::Value;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     net::IpAddr,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -219,4 +219,50 @@ pub fn publish(value: &Value, uid: u32, boot: &str, addresses: &BTreeSet<IpAddr>
         Some(0),
         true,
     )
+}
+/// Returns the interface that still carries the grant's listen address.
+///
+/// # Errors
+/// Fails with `desktop-approved-network-changed` when the address moved or vanished.
+pub fn approved_interface(grant: &Value, interfaces: &BTreeMap<IpAddr, String>) -> Result<String> {
+    let ip: IpAddr = grant["configuration"]["listen_address"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
+    let interface = interfaces
+        .get(&ip)
+        .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
+    require(
+        grant["interface"] == *interface,
+        "desktop-approved-network-changed",
+    )?;
+    Ok(interface.clone())
+}
+/// Refuses a firewall zone other than the reviewed one.
+///
+/// `zone` is `None` while firewalld is not running, which leaves nothing to compare.
+///
+/// # Errors
+/// Fails with `desktop-approved-network-changed` for a different zone.
+pub fn approved_zone(grant: &Value, zone: Option<&str>) -> Result<()> {
+    require(
+        zone.is_none_or(|zone| grant["zone"] == zone),
+        "desktop-approved-network-changed",
+    )
+}
+/// Confirms the grant's reviewed interface, and its zone while firewalld runs.
+///
+/// # Errors
+/// Fails when the network changed or cannot be observed.
+pub async fn verify_network(grant: &Value, firewall: &Firewall) -> Result<()> {
+    let interfaces = tokio::task::spawn_blocking(network::interfaces)
+        .await
+        .map_err(|_| Error("desktop-network-observation-unavailable".into()))??;
+    let interface = approved_interface(grant, &interfaces)?;
+    let zone = if firewall.running().await? {
+        Some(firewall.zone_for(&interface).await?)
+    } else {
+        None
+    };
+    approved_zone(grant, zone.as_deref())
 }

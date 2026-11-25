@@ -85,9 +85,10 @@ is refused rather than silently rotated.
 
 The process runs as the verified desktop owner. Root approves an immutable
 run-only systemd credential; capture remains unprivileged. Logind and the exact
-compositor/socket identity are checked before and during the session. The event driven
-firewall guard revokes sharing when scoped leases or firewalld authority disappear.
-An installed firewall reload ended both an existing TLS client and the listener.
+compositor/socket identity are checked before and during the session. A Root
+firewall guard unit, bound to the sharing unit, restores the scoped lease after a
+firewalld reload or restart and ends sharing if the reviewed interface or zone no
+longer applies. While firewalld is stopped, sharing continues unfiltered.
 
 ## Acceptance boundaries
 
@@ -112,7 +113,7 @@ action from the Root-managed `enzimos-desktop-sharing@UID.service` system unit
 with `NoNewPrivileges` enabled. User units cannot satisfy this system-unit identity.
 Firewall writes retain ordinary administrator authorization. The rule exposes
 firewall metadata to the sharing unit, not credentials or configuration mutation.
-The live guard subscribes before its initial read, rejects missing leases, and
-stops on policy/provider changes; it does not poll. Native acceptance verified the actual worker unique bus owner against its
+The worker subscribes before its initial read and rechecks the session and the
+reviewed network on logind and firewalld events; it does not poll. Native acceptance verified the actual worker unique bus owner against its
 Root system unit MainPID/start ticks: read-only configuration-info was allowed
 and configuration mutation was refused. The earlier read-denial is retained.

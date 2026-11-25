@@ -84,3 +84,22 @@ fn lost_add_response_is_cleaned_up_and_untrusted_policy_is_refused() {
     bad["priority"] = json!(0);
     assert!(firewall::policy_rows(&bad).is_err());
 }
+#[test]
+fn a_configuration_needing_more_rules_than_one_lease_is_refused_before_apply() {
+    let networks: Vec<String> = (0..16).map(|n| format!("192.0.{n}.0/24")).collect();
+    let single = json!({"listen_address":"192.0.2.1","port":45344,"allowed_networks":networks});
+    assert_eq!(
+        firewall::lease_rules(&single).unwrap().len(),
+        firewall::LEASE_RULES
+    );
+    let mut paired = single;
+    paired["listen_addresses"] = json!(["192.0.2.1", "198.51.100.1"]);
+    assert_eq!(
+        firewall::rules(&paired, firewall::TARGET).unwrap().len(),
+        34
+    );
+    assert_eq!(
+        firewall::lease_rules(&paired).unwrap_err().0,
+        "firewall-lease-bound"
+    );
+}

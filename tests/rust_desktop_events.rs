@@ -33,8 +33,7 @@ async fn wait_lost(watch: &Watch) {
     .await
     .unwrap();
 }
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
+async fn private_bus() -> (tempfile::TempDir, String, tokio::process::Child) {
     let work = std::path::PathBuf::from(
         std::env::var_os("ENZIMOS_TEST_TMPDIR")
             .unwrap_or_else(|| env!("CARGO_MANIFEST_DIR").into()),
@@ -67,6 +66,25 @@ async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
         .unwrap()
         .unwrap();
     assert!(line.starts_with(&address));
+    (temp, address, daemon)
+}
+async fn named(address: &str, name: &str) -> zbus::Connection {
+    Builder::address(address)
+        .unwrap()
+        .name(name.to_owned())
+        .unwrap()
+        .build()
+        .await
+        .unwrap()
+}
+async fn quiet(watch: &mut Watch) -> bool {
+    tokio::time::timeout(Duration::from_millis(60), watch.changed())
+        .await
+        .is_err()
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn desktop_events_are_sender_bound_and_only_logind_loss_is_fatal() {
+    let (_temp, address, mut daemon) = private_bus().await;
     let login = Builder::address(address.as_str())
         .unwrap()
         .name("org.freedesktop.login1")
@@ -94,7 +112,7 @@ async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
     let mut watch = Watch::subscribe(
         &client,
         login.unique_name().unwrap().as_str(),
-        firewall.unique_name().unwrap().as_str(),
+        Some(firewall.unique_name().unwrap().as_str()),
         SESSION,
         "c1",
     )
@@ -149,7 +167,7 @@ async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
     let mut replacement_watch = Watch::subscribe(
         &client,
         login.unique_name().unwrap().as_str(),
-        firewall.unique_name().unwrap().as_str(),
+        Some(firewall.unique_name().unwrap().as_str()),
         SESSION,
         "c1",
     )
@@ -166,6 +184,13 @@ async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
         .build()
         .await
         .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), replacement_watch.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replacement_watch.firewall_moved());
+    assert!(!replacement_watch.lost());
+    login.release_name("org.freedesktop.login1").await.unwrap();
     wait_lost(&replacement_watch).await;
     assert!(replacement_watch.changed().await.is_err());
     replacement_watch.retire();
@@ -174,6 +199,70 @@ async fn desktop_events_are_sender_bound_and_loss_survives_a_full_queue() {
     drop(client);
     drop(firewall);
     drop(login);
+    daemon.kill().await.unwrap();
+    daemon.wait().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_firewall_guard_follows_firewalld_while_it_stops_and_starts() {
+    let (_temp, address, mut daemon) = private_bus().await;
+    const FIREWALLD: &str = "org.fedoraproject.FirewallD1";
+    let client = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let attacker = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let mut absent = Watch::firewall(&client).await.unwrap();
+    assert!(quiet(&mut absent).await);
+    let firewalld = named(&address, FIREWALLD).await;
+    tokio::time::timeout(Duration::from_secs(2), absent.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(absent.firewall_moved());
+    absent.retire();
+
+    let mut running = Watch::firewall(&client).await.unwrap();
+    attacker
+        .emit_signal(
+            None::<&str>,
+            "/org/fedoraproject/FirewallD1",
+            FIREWALLD,
+            "Reloaded",
+            &(),
+        )
+        .await
+        .unwrap();
+    assert!(quiet(&mut running).await);
+    firewalld
+        .emit_signal(
+            None::<&str>,
+            "/org/fedoraproject/FirewallD1",
+            FIREWALLD,
+            "Reloaded",
+            &(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), running.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!running.firewall_moved());
+    drop(firewalld);
+    tokio::time::timeout(Duration::from_secs(2), running.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(running.firewall_moved());
+    assert!(!running.lost());
+    running.retire();
+    drop(attacker);
+    drop(client);
     daemon.kill().await.unwrap();
     daemon.wait().await.unwrap();
 }

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Start approved enzimOS SSH sharing once its network appears
+After=dbus.service firewalld.service NetworkManager.service
+Requires=dbus.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/enzimos-remote/ssh-entry retry
+UMask=0077
+TimeoutStartSec=120s
+StandardOutput=journal
+StandardError=journal

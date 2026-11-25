@@ -5,6 +5,8 @@ use serde_json::{Value, json as value};
 use std::net::IpAddr;
 pub const NAME: &str = "enzimosRemote";
 pub const TARGET: &str = "policy:enzimosRemote";
+/// Most rules one listener's lease may own; the journal is bounded to match.
+pub const LEASE_RULES: usize = 17;
 pub fn policy_rows(v: &Value) -> Result<Vec<String>> {
     require(
         v["target"] == "CONTINUE"
@@ -134,6 +136,15 @@ pub fn rules(config: &Value, zone: &str) -> Result<Vec<Rule>> {
     }
     Ok(rows)
 }
+/// Computes the priority-policy lease for `config`, refusing one over [`LEASE_RULES`].
+///
+/// # Errors
+/// Fails for an invalid configuration or one that needs more rules than a lease holds.
+pub fn lease_rules(config: &Value) -> Result<Vec<Rule>> {
+    let rows = rules(config, TARGET)?;
+    require(rows.len() <= LEASE_RULES, "firewall-lease-bound")?;
+    Ok(rows)
+}
 /// Implementations pin and recheck their D-Bus owner on each operation.
 pub trait Interface {
     fn query(&mut self, row: &Rule) -> Result<bool>;
@@ -145,7 +156,10 @@ pub struct Lease {
     pub preexisting: Vec<Rule>,
 }
 pub fn acquire<I: Interface>(interface: &mut I, desired: &[Rule]) -> Result<Lease> {
-    require((1..=17).contains(&desired.len()), "firewall lease bound")?;
+    require(
+        (1..=LEASE_RULES).contains(&desired.len()),
+        "firewall lease bound",
+    )?;
     let mut lease = Lease {
         owned: Vec::new(),
         preexisting: Vec::new(),

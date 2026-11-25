@@ -1,13 +1,17 @@
 [Unit]
 Description=enzimOS approved SSH and SFTP sharing
-After=dbus.service network-online.target firewalld.service
+After=dbus.service network-online.target firewalld.service NetworkManager.service
 Wants=network-online.target
-Requires=dbus.service firewalld.service
+Requires=dbus.service
+# Each unit stops the other: the listener never runs without its firewall guard.
+# firewalld is only ordered: with it stopped, SSH stays up and unfiltered.
+BindsTo=enzimos-sshd-firewall.service
 
 [Service]
 Type=exec
 ExecStartPre=/usr/lib/enzimos-remote/ssh-entry prepare
 ExecStart=/usr/bin/sshd -D -e -f /etc/enzimos/remote/sshd_config
+ExecStartPost=/usr/lib/enzimos-remote/ssh-entry verify
 ExecStopPost=/usr/lib/enzimos-remote/ssh-entry release
 KillMode=process
 TimeoutStartSec=90s
@@ -22,3 +26,4 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+Also=enzimos-sshd-retry.timer

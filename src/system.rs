@@ -8,6 +8,8 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue},
 };
 pub const SSH: &str = "enzimos-sshd.service";
+/// Timer that retries SSH autostart after its approved network appears late.
+pub const SSH_RETRY: &str = "enzimos-sshd-retry.timer";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const PATH: &str = "/org/freedesktop/systemd1";
 pub type Properties = HashMap<String, OwnedValue>;
@@ -124,6 +126,40 @@ impl System {
             "remote-unit-property-bound",
         )?;
         Ok((unit, service))
+    }
+    /// Whether the unit has entered the active state during this boot.
+    ///
+    /// # Errors
+    /// Fails when systemd's owner changes or the property is unavailable.
+    pub async fn activated(&self) -> Result<bool> {
+        let (unit, _) = self.raw_properties().await?;
+        Ok(field::<u64>(&unit, "ActiveEnterTimestampMonotonic")? != 0)
+    }
+    /// Stops the SSH autostart retry timer without waiting for the job.
+    ///
+    /// # Errors
+    /// Fails for a non-SSH unit or when systemd refuses the job.
+    pub async fn stop_retry(&self) -> Result<()> {
+        self.retry_job("StopUnit").await
+    }
+    /// Starts the SSH retry timer for this boot without waiting for the job.
+    ///
+    /// # Errors
+    /// Fails for a non-SSH unit or when systemd refuses the job.
+    pub async fn start_retry(&self) -> Result<()> {
+        self.retry_job("StartUnit").await
+    }
+    async fn retry_job(&self, method: &str) -> Result<()> {
+        require(self.unit == SSH, "remote-system-unit-invalid")?;
+        let path: OwnedObjectPath = self
+            .bus
+            .call(PATH, MANAGER, method, &(SSH_RETRY, "replace"))
+            .await?;
+        require(
+            path.as_str().starts_with("/org/freedesktop/systemd1/job/")
+                && path.as_str().len() <= 128,
+            "remote-unit-job-invalid",
+        )
     }
     pub async fn job(&self, operation: &str) -> Result<()> {
         let method = match operation {

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=enzimOS desktop sharing firewall guard
+BindsTo=enzimos-desktop-sharing@%i.service
+After=dbus.service firewalld.service enzimos-desktop-sharing@%i.service
+Requires=dbus.service
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/enzimos-remote/desktop-entry watch %i
+Restart=no
+UMask=0077
+TimeoutStopSec=15s
+StandardOutput=journal
+StandardError=journal

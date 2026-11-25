@@ -24,6 +24,7 @@ pub mod dispatch;
 pub mod firewall;
 pub mod firewall_bus;
 pub mod firewall_journal;
+pub mod firewall_lease;
 pub mod keys;
 pub mod listener;
 pub mod network;

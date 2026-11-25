@@ -2,7 +2,7 @@
 //! The encrypted capture process runs as the approved desktop owner, never Root.
 use crate::{
     config, desktop_binding, desktop_events::Watch, desktop_grant, desktop_identity,
-    desktop_session::Session, firewall, firewall_bus::Firewall, network,
+    desktop_session::Session, firewall_bus::Firewall, firewall_lease,
 };
 use enzimos_platform::{Error, Result, files, require};
 use serde_json::Value;
@@ -11,7 +11,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::unix::AsyncFd,
@@ -53,34 +53,41 @@ pub fn command(configuration: &Value, directory: &Path, listener_fd: i32) -> Res
     args.push(format!("fd:{listener_fd}"));
     Ok(args)
 }
+// The Root firewall guard keeps the lease; the worker cannot write firewall rules.
 async fn check(
     session: &Session,
-    provider: &Firewall,
+    bus: &zbus::Connection,
+    grant: &Value,
+) -> Result<enzimos_platform::process_identity::Retained> {
+    let retained = check_session(session, grant).await?;
+    check_network(bus, grant).await?;
+    Ok(retained)
+}
+async fn check_session(
+    session: &Session,
     grant: &Value,
 ) -> Result<enzimos_platform::process_identity::Retained> {
     let retained = session.verify_granted(&grant["session"]).await?;
-    let expected = firewall::rules(&grant["configuration"], firewall::TARGET)?;
-    let actual = provider.rows().await?;
-    require(
-        expected.iter().all(|r| actual.contains(&r.rule)),
-        "desktop-firewall-lease-lost",
-    )?;
-    let addresses = tokio::task::spawn_blocking(network::interfaces)
-        .await
-        .map_err(|_| Error("desktop-network-observation-unavailable".into()))??;
-    let ip = grant["configuration"]["listen_address"]
-        .as_str()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
-    let interface = addresses
-        .get(&ip)
-        .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
-    require(
-        grant["interface"] == *interface && grant["zone"] == provider.zone_for(interface).await?,
-        "desktop-approved-network-changed",
-    )?;
     retained.recheck()?;
     Ok(retained)
+}
+async fn check_network(bus: &zbus::Connection, grant: &Value) -> Result<()> {
+    let firewall = Firewall::new(bus.clone()).await?;
+    desktop_grant::verify_network(grant, &firewall).await
+}
+// A firewalld reload or restart and a NetworkManager reconnect briefly report
+// another zone or no answer; only a lasting network change ends sharing.
+fn settle_network(result: Result<()>, unsettled: &mut Option<Instant>) -> Result<()> {
+    let Err(error) = result else {
+        *unsettled = None;
+        return Ok(());
+    };
+    let since = *unsettled.get_or_insert_with(Instant::now);
+    if firewall_lease::definitive(&error) && since.elapsed() >= firewall_lease::RESTORE_WINDOW {
+        return Err(error);
+    }
+    eprintln!("desktop network not confirmed yet: {error}");
+    Ok(())
 }
 struct Capture {
     child: Child,
@@ -138,8 +145,8 @@ pub async fn run(
     )?;
     desktop_grant::session(&grant["session"], uid)?;
     let session = Session::new(bus.clone()).await?;
-    let provider = Firewall::new(bus.clone()).await?;
-    let mut watch = Watch::new(&bus, &session, grant["session"]["id"].as_str().unwrap()).await?;
+    let session_id = grant["session"]["id"].as_str().unwrap();
+    let mut watch = Watch::new(&bus, &session, session_id).await?;
     let mut term = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let identity_path = home.join(".local/share/enzimos/remote-desktop");
@@ -199,7 +206,7 @@ pub async fn run(
     })
     .await
     .map_err(|_| Error("desktop-identity-operation-unavailable".into()))??;
-    let retained = check(&session, &provider, &grant).await?;
+    let retained = check(&session, &bus, &grant).await?;
     require(!watch.lost(), "desktop-session-authority-lost")?;
     let compositor_exit = AsyncFd::new(retained.pidfd().try_clone_to_owned()?)?;
     let fixed = desktop_binding::installed(Path::new(program))?;
@@ -314,8 +321,9 @@ pub async fn run(
         owned.recheck()?;
         }
         if let Some(installed) = &installed_rdp { installed.recheck()?; }
-        check(&session, &provider, &grant).await?;
+        check(&session, &bus, &grant).await?;
         require(!watch.lost(), "desktop-session-authority-lost")?;
+        let mut unsettled = None;
         loop {
             tokio::select! {
                 status = capture.child.wait() => { status?; return Err(Error("desktop-capture-process-exited".into())); },
@@ -324,8 +332,16 @@ pub async fn run(
                 _ = compositor_exit.readable() => return Err(Error("desktop-compositor-exited".into())),
                 event = watch.changed() => {
                     event?;
-                    check(&session, &provider, &grant).await?;
+                    if watch.firewall_moved() {
+                        watch.retire();
+                        watch = Watch::new(&bus, &session, session_id).await?;
+                    }
+                    check_session(&session, &grant).await?;
                     require(!watch.lost(), "desktop-session-authority-lost")?;
+                    settle_network(check_network(&bus, &grant).await, &mut unsettled)?;
+                },
+                () = tokio::time::sleep(Duration::from_secs(1)), if unsettled.is_some() => {
+                    settle_network(check_network(&bus, &grant).await, &mut unsettled)?;
                 },
             }
         }

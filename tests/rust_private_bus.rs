@@ -232,6 +232,7 @@ async fn private_bus_cleanup_is_exact_and_provider_replacement_never_retries() {
         .await
         .unwrap();
     let inactive = Firewall::new(connection.clone()).await.unwrap();
+    assert!(!inactive.running().await.unwrap());
     assert_eq!(
         inactive.zone_for("eth0").await.unwrap_err().0,
         "remote-firewall-inactive"
@@ -246,6 +247,7 @@ async fn private_bus_cleanup_is_exact_and_provider_replacement_never_retries() {
         .build()
         .await
         .unwrap();
+    assert!(inactive.running().await.unwrap());
     assert_eq!(
         inactive.rows().await.unwrap(),
         vec!["borrowed fixture rule".to_owned()]

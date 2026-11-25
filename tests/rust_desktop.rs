@@ -15,6 +15,25 @@ fn grant(uid: u32) -> Value {
             "wayland":{"path":format!("/run/user/{uid}/wayland-0"),"device":5,"inode":6}}})
 }
 #[test]
+fn sharing_follows_the_reviewed_interface_and_its_zone_only_while_firewalld_runs() {
+    let g = grant(1000);
+    let address: IpAddr = "192.0.2.4".parse().unwrap();
+    let on = |interface: &str| std::collections::BTreeMap::from([(address, interface.to_owned())]);
+    assert_eq!(
+        desktop_grant::approved_interface(&g, &on("enp1s0")).unwrap(),
+        "enp1s0"
+    );
+    desktop_grant::approved_zone(&g, Some("public")).unwrap();
+    desktop_grant::approved_zone(&g, None).unwrap();
+    for refused in [
+        desktop_grant::approved_interface(&g, &on("wlan0")).map(drop),
+        desktop_grant::approved_interface(&g, &Default::default()).map(drop),
+        desktop_grant::approved_zone(&g, Some("trusted")),
+    ] {
+        assert_eq!(refused.unwrap_err().0, "desktop-approved-network-changed");
+    }
+}
+#[test]
 fn run_only_grants_refuse_foreign_stale_and_loose_proofs() {
     let addresses = BTreeSet::from(["192.0.2.4".parse::<IpAddr>().unwrap()]);
     let g = grant(1000);

@@ -1,19 +1,39 @@
 // SPDX-License-Identifier: MIT
 //! Root reserves before granting the firewall; release revokes before freeing it.
 use crate::{
-    compositor_grant, desktop_grant, desktop_session::Session, desktop_store::Store, firewall,
-    firewall_bus::Firewall, firewall_journal::Journal, network, ssh_provider,
+    compositor_grant, desktop_grant,
+    desktop_session::Session,
+    desktop_store::Store,
+    firewall::{self, Rule},
+    firewall_bus::Firewall,
+    firewall_journal::Journal,
+    firewall_lease::{self, Restored},
+    network, ssh_provider,
+    system::System,
 };
 use enzimos_platform::{Error, Result, files, require};
-use std::net::SocketAddr;
+use serde_json::Value;
+use std::{net::SocketAddr, sync::Arc};
 use zbus::Connection;
+/// Runs one fixed Root operation of `enzimos-desktop-sharing@UID.service`.
+///
+/// `prepare` and `release` run inside the sharing unit; `watch` runs in its
+/// firewall guard unit and keeps the lease across firewalld reloads, stops and
+/// restarts. Without a running firewalld, sharing runs unfiltered.
+///
+/// # Errors
+/// Fails for an unknown operation or account, without initial-namespace root,
+/// or when the grant, session, network or firewall lease do not match.
 pub async fn entry(operation: &str, uid: u32, connection: Connection) -> Result<()> {
     require(
-        matches!(operation, "prepare" | "release"),
+        matches!(operation, "prepare" | "release" | "watch"),
         "desktop-unit-operation-invalid",
     )?;
     desktop_grant::account(uid)?;
     ssh_provider::root_context()?;
+    if operation == "watch" {
+        return watch(uid, connection).await;
+    }
     let operation = operation.to_owned();
     let runtime = tokio::runtime::Handle::current();
     // The lock lives inside the job until cleanup finishes, including caller cancellation.
@@ -46,7 +66,7 @@ fn execute(
         // revocation error never leaves the firewall rule and socket open.
         let revoked = desktop_grant::revoke(uid);
         let capture_revoked = compositor_grant::revoke(uid);
-        let released = journal.release();
+        let released = journal.release_or_forget();
         let cleared = runtime.block_on(store.clear());
         revoked?;
         capture_revoked?;
@@ -75,16 +95,20 @@ fn execute(
         .as_str()
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
-    let interface = addresses
-        .get(&ip)
-        .ok_or_else(|| Error("desktop-approved-network-changed".into()))?;
-    require(
-        grant["interface"] == *interface
-            && grant["zone"] == runtime.block_on(journal.interface.zone_for(interface))?,
-        "desktop-approved-network-changed",
-    )?;
+    let interface = desktop_grant::approved_interface(&grant, &addresses)?;
+    let firewall_running = runtime.block_on(journal.interface.running())?;
+    let zone = if firewall_running {
+        Some(runtime.block_on(journal.interface.zone_for(&interface))?)
+    } else {
+        None
+    };
+    desktop_grant::approved_zone(&grant, zone.as_deref())?;
     compositor_grant::revoke(uid)?;
-    journal.release()?;
+    if firewall_running {
+        journal.release()?;
+    } else {
+        journal.forget()?;
+    }
     let endpoint = SocketAddr::new(
         ip,
         configuration["port"]
@@ -93,7 +117,11 @@ fn execute(
     );
     let connection = runtime.block_on(store.hold(endpoint))?;
     let result: Result<()> = (|| {
-        journal.acquire(&firewall::rules(configuration, firewall::TARGET)?)?;
+        // A firewalld that starts after the zone check is leased by the guard,
+        // which checks the reviewed zone first.
+        if firewall_running {
+            journal.acquire(&firewall::rules(configuration, firewall::TARGET)?)?;
+        }
         runtime.block_on(session.verify(&grant["session"]))?;
         require(desktop_grant::load(uid)? == grant, "desktop-grant-changed")?;
         if let Some(installed) = &provider_identity {
@@ -107,11 +135,75 @@ fn execute(
     })();
     if let Err(error) = result {
         let _ = compositor_grant::revoke(uid);
-        let _ = journal.release();
+        let _ = journal.release_or_forget();
         let _ = runtime.block_on(store.clear());
         return Err(error);
     }
     // Only the control helper's duplicate closes here; PID 1 keeps its reservation.
     drop(connection);
     Ok(())
+}
+struct Guarded {
+    uid: u32,
+    connection: Connection,
+    boot: String,
+    grant: Value,
+    rules: Vec<Rule>,
+    system: System,
+    main_pid: u32,
+}
+// Exiting stops sharing: the sharing unit and its guard bind each other.
+async fn watch(uid: u32, connection: Connection) -> Result<()> {
+    let boot = ssh_provider::boot_id()?;
+    let grant = tokio::task::spawn_blocking(move || desktop_grant::load(uid))
+        .await
+        .map_err(|_| Error("desktop-unit-outcome-unknown".into()))??;
+    let rules = firewall::rules(&grant["configuration"], firewall::TARGET)?;
+    let system = System::new(
+        connection.clone(),
+        &format!("enzimos-desktop-sharing@{uid}.service"),
+    )
+    .await?;
+    let listener = system.properties().await?;
+    require(
+        listener.active == "active" && listener.main_pid > 0,
+        "desktop-listener-not-active",
+    )?;
+    let guarded = Arc::new(Guarded {
+        uid,
+        connection: connection.clone(),
+        boot,
+        grant,
+        rules,
+        system,
+        main_pid: listener.main_pid,
+    });
+    firewall_lease::follow(&connection, "desktop", move || renew(&guarded)).await
+}
+fn renew(guarded: &Guarded) -> Result<Restored> {
+    let runtime = tokio::runtime::Handle::current();
+    let directory = desktop_grant::folder(guarded.uid)?;
+    let _lock = files::Lock::acquire(&directory.join("firewall.lock"), 0)?;
+    let mut provider = runtime.block_on(Firewall::new(guarded.connection.clone()))?;
+    let running = runtime.block_on(provider.running())?;
+    let observer = provider.clone();
+    let path = directory.join("firewall.json");
+    let mut journal = Journal {
+        path: &path,
+        owner: 0,
+        boot_id: &guarded.boot,
+        interface: &mut provider,
+    };
+    firewall_lease::restore(&mut journal, &guarded.rules, running, || {
+        require(
+            desktop_grant::load(guarded.uid)? == guarded.grant,
+            "desktop-grant-changed",
+        )?;
+        let listener = runtime.block_on(guarded.system.properties())?;
+        require(
+            listener.active == "active" && listener.main_pid == guarded.main_pid,
+            "desktop-listener-not-active",
+        )?;
+        runtime.block_on(desktop_grant::verify_network(&guarded.grant, &observer))
+    })
 }

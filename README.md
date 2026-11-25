@@ -15,6 +15,15 @@ For SSH, review the configuration with `enzimos-remote review FILE`, then apply
 it with `enzimos-remote apply FILE --allow-interaction`. Choose the local
 addresses to listen on and the client networks to allow. SSH uses key
 authentication by default. Account password authentication is an explicit option.
+Review records the interface, firewall zone and NetworkManager connection of each
+listen address. SSH starts at boot only on that same network, and starts later if
+the network connects after boot. Autostart requires a NetworkManager connection.
+A firewall guard restores the SSH allowance after a firewalld reload or restart.
+While firewalld is stopped or not answering, SSH keeps listening only on its
+approved addresses and accepts connections from any network. The guard stops SSH
+only when the approval changes or the listen address leaves the reviewed network,
+and SSH starts again once that network returns. See
+[SSH approval state](docs/SSH_APPROVAL_STATE.md) for upgrade and downgrade behaviour.
 Turning off the listener preserves established SSH sessions. Use
 `review-disconnect` and `disconnect` to close them separately.
 
@@ -22,7 +31,8 @@ For desktop sharing, use `review-desktop FILE` and
 `apply-desktop FILE --allow-interaction`. WayVNC runs as the desktop owner and
 uses a separate sharing password and TLS certificate. You can grant view-only
 access or allow input. Sharing ends when the session locks, becomes inactive or
-logs out. To stop it yourself, use `review-stop-desktop` and
+logs out. Its firewall allowance follows firewalld reloads, stops and restarts
+in the same way as SSH. To stop it yourself, use `review-stop-desktop` and
 `stop-desktop --allow-interaction`. This closes desktop connections and leaves
 SSH sessions running.
 
