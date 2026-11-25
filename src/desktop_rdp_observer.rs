@@ -29,6 +29,7 @@ fn epoch(m: &std::fs::Metadata) -> (u64, u64, u64, u32, u32, u32, i64, i64, i64,
 fn context(uid: u32) -> Result<()> {
     desktop_grant::account(uid)?;
     require(
+        // SAFETY: geteuid and getuid have no preconditions and cannot fail.
         unsafe { libc::getuid() } == 0 && unsafe { libc::geteuid() } == 0,
         "desktop-rdp-root-observer-required",
     )?;
@@ -87,6 +88,7 @@ impl Task {
             revents: 0,
         };
         require(
+            // SAFETY: `entry` is one writable pollfd and the count is 1.
             unsafe { libc::poll(&mut entry, 1, 0) } == 0,
             "desktop-rdp-task-exited",
         )
@@ -95,10 +97,13 @@ impl Task {
     fn observe(pid: u32, uid: u32, parent: Option<u32>, fixed: &File) -> Result<Self> {
         context(uid)?;
         require(pid > 0 && pid < i32::MAX as u32, "desktop-rdp-task-pid")?;
+        // SAFETY: pidfd_open takes no pointers.
         let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 };
         require(raw >= 0, "desktop-rdp-task-pidfd")?;
+        // SAFETY: `raw` was just returned by pidfd_open and is owned by nothing else.
         let pidfd = unsafe { File::from_raw_fd(raw) };
         let directory = files::directory(&PathBuf::from(format!("/proc/{pid}")), Some(0))?;
+        // SAFETY: The name is a NUL-terminated literal and `directory` keeps the descriptor open.
         let raw = unsafe {
             libc::openat(
                 directory.as_raw_fd(),
@@ -107,6 +112,7 @@ impl Task {
             )
         };
         require(raw >= 0, "desktop-rdp-task-executable")?;
+        // SAFETY: `raw` was just returned by openat and is owned by nothing else.
         let image = unsafe { File::from_raw_fd(raw) };
         let mut task = Self {
             pid,
@@ -153,6 +159,8 @@ impl Task {
             held.dev() == current.dev() && held.ino() == current.ino(),
             "desktop-rdp-task-directory-replaced",
         )?;
+        // SAFETY: The name is a NUL-terminated literal and `self.directory` keeps the descriptor
+        // open.
         let raw = unsafe {
             libc::openat(
                 self.directory.as_raw_fd(),
@@ -161,6 +169,7 @@ impl Task {
             )
         };
         require(raw >= 0, "desktop-rdp-task-executable")?;
+        // SAFETY: `raw` was just returned by openat and is owned by nothing else.
         let current = unsafe { File::from_raw_fd(raw) };
         require(
             epoch(&self.image.metadata()?) == epoch(&fixed.metadata()?)
@@ -172,8 +181,18 @@ impl Task {
 }
 fn worker_image() -> Result<(File, std::fs::Metadata)> {
     let path = Path::new(desktop_unit_trust::WORKER);
-    let parent = files::directory(path.parent().unwrap(), Some(0))?;
-    let file = files::open_relative(&parent, Path::new(path.file_name().unwrap()))?;
+    let parent = files::directory(
+        path.parent()
+            .ok_or_else(|| enzimos_platform::Error("missing parent".into()))?,
+        Some(0),
+    )?;
+    let file = files::open_relative(
+        &parent,
+        Path::new(
+            path.file_name()
+                .ok_or_else(|| enzimos_platform::Error("missing filename".into()))?,
+        ),
+    )?;
     let meta = file.metadata()?;
     require(
         meta.is_file()
@@ -260,6 +279,7 @@ mod tests {
     #[test]
     #[allow(unsafe_code, reason = "Linux syscall ABI (getuid).")]
     fn root_observer_refuses_before_any_task_or_installed_file_access() {
+        // SAFETY: getuid has no preconditions and cannot fail.
         if unsafe { libc::getuid() } == 0 {
             return;
         }

@@ -17,7 +17,7 @@ pub fn validate(v: &Value) -> Result<()> {
         v["schema"] == 1
             && v["uid"]
                 .as_u64()
-                .is_some_and(|n| (1000..u32::MAX as u64).contains(&n))
+                .is_some_and(|n| (1000..u64::from(u32::MAX)).contains(&n))
             && matches!(
                 v["phase"].as_str(),
                 Some("pending" | "complete" | "failed" | "uncertain")

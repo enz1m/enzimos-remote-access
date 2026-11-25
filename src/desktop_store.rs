@@ -36,6 +36,7 @@ impl Store {
         let pid = std::process::id();
         let groups = files::read_kernel(&PathBuf::from(format!("/proc/{pid}/cgroup")), 8192)?;
         let expected = format!("0::/system.slice/{}", self.system.unit_name());
+        // SAFETY: geteuid has no preconditions and cannot fail.
         Ok(unsafe { libc::geteuid() } == 0
             && p.control_pid == pid
             && groups

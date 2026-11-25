@@ -152,6 +152,7 @@ impl Firewall {
         // one user's release can resurrect another's removed rules.
         // Production edits always run as root; unprivileged test fixtures use a
         // private bus and have no shared policy to protect.
+        // SAFETY: geteuid has no preconditions and cannot fail.
         let _policy = if unsafe { libc::geteuid() } == 0 {
             Some(policy_lock().await?)
         } else {

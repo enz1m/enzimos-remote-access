@@ -55,9 +55,15 @@ pub fn command(
         "--listener-fd".into(),
         listener.to_string(),
         "--address".into(),
-        checked["listen_address"].as_str().unwrap().into(),
+        checked["listen_address"]
+            .as_str()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
+            .into(),
         "--port".into(),
-        checked["port"].as_u64().unwrap().to_string(),
+        checked["port"]
+            .as_u64()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
+            .to_string(),
         "--certificate".into(),
         identity
             .join("certificate.pem")
@@ -89,6 +95,7 @@ pub fn credential(password: &str) -> Result<OwnedFd> {
                 .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)),
         "desktop-private-password-bound",
     )?;
+    // SAFETY: The name is a NUL-terminated literal.
     let raw = unsafe {
         libc::memfd_create(
             c"enzimos-sharing".as_ptr(),
@@ -96,27 +103,34 @@ pub fn credential(password: &str) -> Result<OwnedFd> {
         )
     };
     require(raw >= 0, "desktop-anonymous-credential-unavailable")?;
+    // SAFETY: `raw` was just returned by memfd_create and is owned by nothing else.
     let mut file = unsafe { File::from_raw_fd(raw) };
     require(
+        // SAFETY: fchmod takes no pointers and `file` owns `raw`.
         unsafe { libc::fchmod(raw, 0o600) } == 0,
         "desktop-anonymous-credential-permissions",
     )?;
     file.write_all(password.as_bytes())?;
     require(
+        // SAFETY: F_ADD_SEALS takes no pointers and `file` owns `raw`.
         unsafe { libc::fcntl(raw, libc::F_ADD_SEALS, SEALS) } == 0,
         "desktop-anonymous-credential-sealing",
     )?;
     let meta = file.metadata()?;
     require(
+        // SAFETY: getuid has no preconditions and cannot fail.
         meta.uid() == unsafe { libc::getuid() }
             && meta.nlink() == 0
             && meta.mode() & 0o7777 == 0o600
             && meta.len() == password.len() as u64
+            // SAFETY: F_GET_SEALS takes no pointers and `file` owns `raw`.
             && unsafe { libc::fcntl(raw, libc::F_GET_SEALS) } == SEALS,
         "desktop-anonymous-credential-changed",
     )?;
+    // SAFETY: F_DUPFD_CLOEXEC takes no pointers and `file` keeps the source open.
     let inherited = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 64) };
     require(inherited >= 0, "desktop-anonymous-credential-duplication")?;
+    // SAFETY: `inherited` is a fresh duplicate owned by nothing else.
     let inherited = unsafe { OwnedFd::from_raw_fd(inherited) };
     require(
         inherited.as_raw_fd() <= 1024,
@@ -245,6 +259,7 @@ impl Installed {
         self.recheck()?;
         let (_, file, meta) = &self.members[1];
         require(meta.mode() & 0o111 != 0, "desktop-rdp-installed-executable")?;
+        // SAFETY: A null buffer with size 0 only queries the attribute size, and `file` stays open.
         let capabilities = unsafe {
             libc::fgetxattr(
                 file.as_raw_fd(),
@@ -292,6 +307,8 @@ pub fn exec_original(
     for (slot, value) in env.iter_mut().zip(environment) {
         *slot = value.as_ptr().cast_mut();
     }
+    // SAFETY: `args` and `env` are null-terminated arrays of pointers into CStrings that outlive
+    // the call.
     unsafe {
         libc::execveat(
             file.as_raw_fd(),

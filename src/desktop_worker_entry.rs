@@ -10,6 +10,7 @@ fn execute() -> Result<()> {
         std::env::args_os().count() == 1,
         "desktop-worker-arguments-unavailable",
     )?;
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     let grant = desktop_credential::credential(uid)?;
     let account = accounts::lookup_uid(uid)?;
@@ -27,6 +28,8 @@ fn execute() -> Result<()> {
     std::env::set_current_dir("/")?;
     // Before Tokio starts threads; no caller-controlled bus address or injection survives.
     for (name, _) in std::env::vars_os() {
+        // SAFETY: The process is still single-threaded here, so no other thread reads the
+        // environment.
         unsafe { std::env::remove_var(name) };
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()

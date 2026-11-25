@@ -25,14 +25,12 @@ impl Slots {
         })
     }
     pub fn acquire(self: &Arc<Self>) -> Result<Permit> {
-        let permit = self
-            .semaphore
-            .clone()
+        let permit = std::sync::Arc::clone(&self.semaphore)
             .try_acquire_owned()
             .map_err(|_| Error("remote-request-bound".into()))?;
         Ok(Permit {
             permit: Some(permit),
-            slots: self.clone(),
+            slots: std::sync::Arc::clone(self),
         })
     }
     pub fn idle(&self) -> bool {

@@ -9,7 +9,6 @@ use enzimos_remote_access::{
 use std::collections::HashMap;
 use std::{
     os::unix::fs::PermissionsExt,
-    path::Path,
     process::Stdio,
     sync::{
         Arc, Mutex,
@@ -29,11 +28,13 @@ struct Policy {
 impl Policy {
     #[zbus(name = "getPolicySettings")]
     fn get(&self, name: &str) -> HashMap<String, OwnedValue> {
-        assert_eq!(name, firewall::NAME);
+        assert_eq!(name, firewall::NAME, "firewalld policy name");
         let mut settings = HashMap::new();
         settings.insert(
             "target".into(),
-            Value::from("CONTINUE").try_to_owned().unwrap(),
+            Value::from("CONTINUE")
+                .try_to_owned()
+                .expect("test fixture"),
         );
         settings.insert(
             "priority".into(),
@@ -43,24 +44,29 @@ impl Policy {
                 false.into()
             },
         );
+        let rich_rules = self.rows.lock().expect("test fixture").clone();
         for (key, rows) in [
             ("ingress_zones", vec!["ANY".to_owned()]),
             ("egress_zones", vec!["HOST".to_owned()]),
-            ("rich_rules", self.rows.lock().unwrap().clone()),
+            ("rich_rules", rich_rules),
         ] {
             // Like firewalld 2.5, leave out empty lists.
             if !rows.is_empty() {
-                settings.insert(key.into(), Value::from(rows).try_to_owned().unwrap());
+                settings.insert(
+                    key.into(),
+                    Value::from(rows).try_to_owned().expect("test fixture"),
+                );
             }
         }
         settings
     }
     #[zbus(name = "setPolicySettings")]
     fn set(&self, name: &str, settings: HashMap<String, OwnedValue>) {
-        assert_eq!(name, firewall::NAME);
-        assert_eq!(settings.len(), 1);
-        *self.rows.lock().unwrap() =
-            Vec::<String>::try_from(settings["rich_rules"].try_clone().unwrap()).unwrap();
+        assert_eq!(name, firewall::NAME, "firewalld policy name");
+        assert_eq!(settings.len(), 1, "only rich rules are updated");
+        *self.rows.lock().expect("test fixture") =
+            Vec::<String>::try_from(settings["rich_rules"].try_clone().expect("test fixture"))
+                .expect("test fixture");
     }
 }
 const PATH_UNIT: &str =
@@ -76,13 +82,19 @@ struct Manager(Data);
 #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
 impl Manager {
     fn load_unit(&self, name: &str) -> OwnedObjectPath {
-        assert_eq!(name, "enzimos-desktop-sharing@1000.service");
+        assert_eq!(
+            name, "enzimos-desktop-sharing@1000.service",
+            "sharing unit name"
+        );
         self.0.loads.fetch_add(1, Ordering::SeqCst);
-        OwnedObjectPath::try_from(PATH_UNIT).unwrap()
+        OwnedObjectPath::try_from(PATH_UNIT).expect("test fixture")
     }
     fn clean_unit(&self, name: &str, mask: Vec<String>) {
-        assert_eq!(name, "enzimos-desktop-sharing@1000.service");
-        assert_eq!(mask, vec!["fdstore"]);
+        assert_eq!(
+            name, "enzimos-desktop-sharing@1000.service",
+            "sharing unit name"
+        );
+        assert_eq!(mask, vec!["fdstore"], "only the fd store is cleaned");
         self.0.clean.fetch_add(1, Ordering::SeqCst);
         self.0.store.store(0, Ordering::SeqCst);
     }

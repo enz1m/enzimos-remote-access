@@ -117,7 +117,7 @@ pub(crate) async fn observe(uid: u32, leader: u32, grant: &Value) -> Result<Valu
         .ok_or_else(|| Error("desktop-grant-invalid".into()))?;
     let path = PathBuf::from(format!(
         "/run/user/{uid}/enzimos-sharing/{}/control.sock",
-        &nonce[..16]
+        nonce.get(..16).unwrap_or(nonce)
     ));
     // A replaced owner-writable pathname is insufficient: SO_PEERCRED must match
     // the pinned installed capture task in the approved system-service cgroup.

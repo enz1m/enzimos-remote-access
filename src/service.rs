@@ -50,18 +50,18 @@ pub fn validate(message: &Message) -> Result<Call> {
     let header = message.header();
     require(
         header.primary().msg_type() == Type::MethodCall
-            && header.path().map(|p| p.as_str()) == Some(PATH)
-            && header.interface().map(|i| i.as_str()) == Some(NAME)
+            && header.path().map(zbus::zvariant::ObjectPath::as_str) == Some(PATH)
+            && header.interface().map(zbus::names::InterfaceName::as_str) == Some(NAME)
             && !header.primary().flags().contains(Flags::NoReplyExpected),
         "wire-method-or-signature-unavailable",
     )?;
     let (member, has_body) = METHODS
         .iter()
-        .find(|(name, _)| header.member().map(|m| m.as_str()) == Some(*name))
+        .find(|(name, _)| header.member().map(zbus::names::MemberName::as_str) == Some(*name))
         .ok_or_else(|| Error("wire-method-or-signature-unavailable".into()))?;
     let sender = header
         .sender()
-        .map(|s| s.as_str())
+        .map(zbus::names::UniqueName::as_str)
         .ok_or_else(|| Error("unique-system-bus-sender-required".into()))?;
     let parts = sender
         .strip_prefix(':')
@@ -125,8 +125,16 @@ impl Api {
         let ssh = Ssh::new(connection.clone()).await?;
         let desktop = Desktop::new(connection).await?;
         Ok(Self {
-            ssh: dispatch::Dispatcher::with_slots(authority.clone(), ssh, slots.clone()),
-            desktop: desktop_dispatch::Dispatcher::new(authority, desktop, slots.clone()),
+            ssh: dispatch::Dispatcher::with_slots(
+                authority.clone(),
+                ssh,
+                std::sync::Arc::clone(&slots),
+            ),
+            desktop: desktop_dispatch::Dispatcher::new(
+                authority,
+                desktop,
+                std::sync::Arc::clone(&slots),
+            ),
             slots,
             desktop_observers: Mutex::new(BTreeMap::new()),
         })
@@ -311,25 +319,26 @@ pub async fn serve<H: Handler>(
         let deadline = last + idle;
         tokio::select! {
             _ = changes.tick(), if observation.is_none() => {
-                let handler = handler.clone();
+                let handler = std::sync::Arc::clone(&handler);
                 let connection = connection.clone();
                 observation = Some(tokio::spawn(async move { handler.invalidate(&connection).await }));
             },
-            _ = async { if let Some(task) = observation.as_mut() { let _ = task.await; } }, if observation.is_some() => {
+            () = async { if let Some(task) = observation.as_mut() { let _ = task.await; } }, if observation.is_some() => {
                 observation = None;
             },
             message = stream.next() => {
                 let message = message.ok_or_else(|| Error("remote-service-bus-disconnected".into()))?.map_err(|_| Error("remote-service-bus-disconnected".into()))?;
                 if message.header().primary().msg_type() != Type::MethodCall { continue; }
-                let call = validate(&message);
-                if tasks.len() >= 8 || call.is_err() {
-                    let error = call.err().unwrap_or_else(|| Error("remote-request-bound".into()));
-                    reply(&connection, &message, Err(error)).await?;
-                    last = Instant::now();
-                    continue;
-                }
-                let call = call.unwrap();
-                let handler = handler.clone();
+                let call = match validate(&message) {
+                    Ok(call) if tasks.len() < 8 => call,
+                    refused => {
+                        let error = refused.err().unwrap_or_else(|| Error("remote-request-bound".into()));
+                        reply(&connection, &message, Err(error)).await?;
+                        last = Instant::now();
+                        continue;
+                    }
+                };
+                let handler = std::sync::Arc::clone(&handler);
                 let connection = connection.clone();
                 tasks.spawn(async move {
                     let result = tokio::time::timeout(Duration::from_secs(180), handler.handle(call)).await.unwrap_or_else(|_| Err(Error("remote-request-outcome-unknown".into())));
@@ -340,10 +349,10 @@ pub async fn serve<H: Handler>(
                 finished.ok_or_else(|| Error("remote-request-outcome-unknown".into()))?.map_err(|_| Error("remote-request-outcome-unknown".into()))??;
                 last = Instant::now();
             },
-            _ = tokio::time::sleep_until(deadline), if tasks.is_empty() && handler.idle() => {
+            () = tokio::time::sleep_until(deadline), if tasks.is_empty() && handler.idle() => {
                 if tasks.is_empty() && handler.idle() && Instant::now() >= deadline { break; }
             },
-            _ = handler.settled(), if tasks.is_empty() && !handler.idle() => { last = Instant::now(); },
+            () = handler.settled(), if tasks.is_empty() && !handler.idle() => { last = Instant::now(); },
         }
     }
     if let Some(task) = observation {

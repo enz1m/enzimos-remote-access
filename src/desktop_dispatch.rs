@@ -73,7 +73,7 @@ impl<P: Reviewed> Dispatcher<P> {
         graphical(&peer)?;
         let authority = self.authority.clone();
         let sender = sender.to_owned();
-        let provider = self.provider.clone();
+        let provider = std::sync::Arc::clone(&self.provider);
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -104,7 +104,7 @@ impl<P: Reviewed> Dispatcher<P> {
         graphical(&peer)?;
         let authority = self.authority.clone();
         let sender = sender.to_owned();
-        let provider = self.provider.clone();
+        let provider = std::sync::Arc::clone(&self.provider);
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let mut provider = provider
@@ -158,16 +158,20 @@ impl<P: Reviewed> Dispatcher<P> {
             .authorize(
                 sender,
                 "org.enzimos.remote.desktop",
-                request["allow_interaction"].as_bool().unwrap(),
+                request["allow_interaction"]
+                    .as_bool()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
                 arrived,
-                request["valid_for_ms"].as_u64().unwrap(),
+                request["valid_for_ms"]
+                    .as_u64()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
             )
             .await?;
         require(grant.peer == peer, "caller-session-changed")?;
         let alive = Alive(Arc::new(AtomicBool::new(true)));
-        let active = alive.0.clone();
+        let active = std::sync::Arc::clone(&alive.0);
         let authority = self.authority.clone();
-        let provider = self.provider.clone();
+        let provider = std::sync::Arc::clone(&self.provider);
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -183,7 +187,7 @@ impl<P: Reviewed> Dispatcher<P> {
                 }
                 Ok(())
             };
-            before_commit(&mut *provider, true)?;
+            before_commit(&mut provider, true)?;
             provider.change(&peer, &reviewed, operation, &mut before_commit)
         })
         .await

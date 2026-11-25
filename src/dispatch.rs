@@ -91,7 +91,7 @@ impl<P: ReviewedProvider> Dispatcher<P> {
         let permit = self.slots.acquire()?;
         let peer = self.authority.peer(sender).await?;
         graphical(&peer)?;
-        let provider = self.provider.clone();
+        let provider = std::sync::Arc::clone(&self.provider);
         let authority = self.authority.clone();
         let sender = sender.to_owned();
         let runtime = tokio::runtime::Handle::current();
@@ -124,7 +124,7 @@ impl<P: ReviewedProvider> Dispatcher<P> {
         let request = decode(body, if disconnect { "" } else { "configuration" })?;
         let peer = self.authority.peer(sender).await?;
         graphical(&peer)?;
-        let provider = self.provider.clone();
+        let provider = std::sync::Arc::clone(&self.provider);
         let authority = self.authority.clone();
         let sender = sender.to_owned();
         let runtime = tokio::runtime::Handle::current();
@@ -169,15 +169,19 @@ impl<P: ReviewedProvider> Dispatcher<P> {
             .authorize(
                 sender,
                 "org.enzimos.remote.configure",
-                request["allow_interaction"].as_bool().unwrap(),
+                request["allow_interaction"]
+                    .as_bool()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
                 arrived,
-                request["valid_for_ms"].as_u64().unwrap(),
+                request["valid_for_ms"]
+                    .as_u64()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
             )
             .await?;
         require(grant.peer == peer, "caller-session-changed")?;
         let alive = Alive(Arc::new(AtomicBool::new(true)));
-        let active = alive.0.clone();
-        let provider = self.provider.clone();
+        let active = std::sync::Arc::clone(&alive.0);
+        let provider = std::sync::Arc::clone(&self.provider);
         let authority = self.authority.clone();
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {

@@ -31,20 +31,21 @@ pub fn endpoint(value: &str) -> Result<(IpAddr, u16)> {
         .as_bytes()
         .chunks_exact(2)
         .map(|b| {
-            u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16)
-                .map_err(|_| Error("tcp-observation-invalid".into()))
+            std::str::from_utf8(b)
+                .ok()
+                .and_then(|text| u8::from_str_radix(text, 16).ok())
+                .ok_or_else(|| Error("tcp-observation-invalid".into()))
         })
         .collect::<Result<Vec<_>>>()?;
     for word in bytes.chunks_exact_mut(4) {
         word.reverse();
     }
-    let ip = if bytes.len() == 4 {
-        IpAddr::V4(Ipv4Addr::from(
-            <[u8; 4]>::try_from(bytes.as_slice()).unwrap(),
-        ))
+    let ip = if let Ok(v4) = <[u8; 4]>::try_from(bytes.as_slice()) {
+        IpAddr::V4(Ipv4Addr::from(v4))
     } else {
         IpAddr::V6(Ipv6Addr::from(
-            <[u8; 16]>::try_from(bytes.as_slice()).unwrap(),
+            <[u8; 16]>::try_from(bytes.as_slice())
+                .map_err(|_| Error("tcp-observation-invalid".into()))?,
         ))
     };
     let port =
@@ -109,7 +110,9 @@ pub fn parse(body: &str) -> Result<BTreeMap<u64, Socket>> {
 }
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getpid).")]
 pub fn table() -> Result<BTreeMap<u64, Socket>> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let uid = unsafe { libc::geteuid() };
+    // SAFETY: getpid has no preconditions and cannot fail.
     let pid = unsafe { libc::getpid() };
     let mut table = BTreeMap::new();
     // /proc/net is a self symlink. Use our numeric PID and stay in the descriptor
@@ -147,8 +150,11 @@ pub fn inodes(pid: u32, uid: u32) -> Result<BTreeSet<u64>> {
             !spelling.is_empty() && spelling.bytes().all(|b| b.is_ascii_digit()),
             "process-fd-name",
         )?;
-        let name = std::ffi::CString::new(spelling).unwrap();
+        let name = std::ffi::CString::new(spelling)
+            .map_err(|_| enzimos_platform::Error("invalid C string".into()))?;
         let mut body = [0u8; 4096];
+        // SAFETY: `name` is a NUL-terminated CString, the buffer pointer and length describe
+        // `body`, and `directory` stays open.
         let n = unsafe {
             libc::readlinkat(
                 directory.as_raw_fd(),

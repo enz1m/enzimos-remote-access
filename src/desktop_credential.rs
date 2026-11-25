@@ -32,8 +32,10 @@ pub fn read(path: &Path, uid: u32) -> Result<Vec<u8>> {
         "desktop-system-credential-permissions",
     )?;
     if before.uid() != 0 {
+        // SAFETY: `libc::statvfs` is a plain C struct, for which all-zero bytes are a valid value.
         let mut vfs: libc::statvfs = unsafe { std::mem::zeroed() };
         require(
+            // SAFETY: `vfs` is a writable `libc::statvfs` and `file` keeps the descriptor open.
             unsafe { libc::fstatvfs(file.as_raw_fd(), &mut vfs) } == 0
                 && vfs.f_flag & libc::ST_RDONLY != 0,
             "desktop-system-credential-writable-mount",
@@ -66,6 +68,7 @@ fn identity(m: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64, u32, u
 pub fn credential(uid: u32) -> Result<Value> {
     desktop_grant::account(uid)?;
     require(
+        // SAFETY: geteuid and getuid have no preconditions and cannot fail.
         unsafe { libc::getuid() } == uid && unsafe { libc::geteuid() } == uid,
         "desktop-ordinary-user-worker-required",
     )?;

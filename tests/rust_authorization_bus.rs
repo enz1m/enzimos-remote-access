@@ -40,18 +40,20 @@ struct Login(State);
 impl Login {
     #[zbus(name = "GetSessionByPID")]
     fn session(&self, pid: u32) -> Result<OwnedObjectPath, LoginError> {
-        assert_eq!(pid, std::process::id());
+        assert_eq!(pid, std::process::id(), "caller is the test process");
         match self.0.mode.load(Ordering::SeqCst) {
-            0 => Ok(SESSION.try_into().unwrap()),
+            0 => SESSION
+                .try_into()
+                .map_err(|_| LoginError::Unavailable("invalid fixture path".into())),
             1 => Err(LoginError::NoSessionForPID("no session".into())),
             _ => Err(LoginError::Unavailable("no authority".into())),
         }
     }
     #[zbus(name = "GetUserByPID")]
     fn user(&self, pid: u32) -> OwnedObjectPath {
-        assert_eq!(pid, std::process::id());
+        assert_eq!(pid, std::process::id(), "caller is the test process");
         self.0.user_queries.fetch_add(1, Ordering::SeqCst);
-        USER.try_into().unwrap()
+        USER.try_into().expect("test fixture")
     }
 }
 struct Local(State);
@@ -71,13 +73,15 @@ impl Local {
     }
     #[zbus(property)]
     fn user(&self) -> (u32, OwnedObjectPath) {
-        (self.0.uid, USER.try_into().unwrap())
+        (self.0.uid, USER.try_into().expect("test fixture"))
     }
     #[zbus(property)]
     fn seat(&self) -> (String, OwnedObjectPath) {
         (
             "seat0".into(),
-            "/org/freedesktop/login1/seat/seat0".try_into().unwrap(),
+            "/org/freedesktop/login1/seat/seat0"
+                .try_into()
+                .expect("test fixture"),
         )
     }
     #[zbus(property)]
@@ -106,11 +110,11 @@ impl User {
     }
     #[zbus(property)]
     fn display(&self) -> (String, OwnedObjectPath) {
-        ("c1".into(), SESSION.try_into().unwrap())
+        ("c1".into(), SESSION.try_into().expect("test fixture"))
     }
     #[zbus(property)]
     fn sessions(&self) -> Vec<(String, OwnedObjectPath)> {
-        vec![("c1".into(), SESSION.try_into().unwrap())]
+        vec![("c1".into(), SESSION.try_into().expect("test fixture"))]
     }
 }
 struct Policy(State);
@@ -124,19 +128,30 @@ impl Policy {
         flags: u32,
         cancellation_id: &str,
     ) -> (bool, bool, HashMap<String, String>) {
-        assert_eq!(subject.0, "system-bus-name");
-        assert_eq!(subject.1.len(), 1);
+        assert_eq!(subject.0, "system-bus-name", "subject kind");
+        assert_eq!(subject.1.len(), 1, "subject has only a name");
         assert!(
-            String::try_from(subject.1["name"].try_clone().unwrap())
-                .unwrap()
-                .starts_with(':')
+            String::try_from(subject.1["name"].try_clone().expect("test fixture"))
+                .expect("test fixture")
+                .starts_with(':'),
+            "subject is a unique bus name"
         );
-        assert!(matches!(
-            action,
-            "org.enzimos.remote.configure" | "org.enzimos.remote.desktop"
-        ));
-        assert!(details.is_empty() && flags <= 1);
-        self.0.ids.lock().unwrap().push(cancellation_id.into());
+        assert!(
+            matches!(
+                action,
+                "org.enzimos.remote.configure" | "org.enzimos.remote.desktop"
+            ),
+            "known action"
+        );
+        assert!(
+            details.is_empty() && flags <= 1,
+            "no details and known flags"
+        );
+        self.0
+            .ids
+            .lock()
+            .expect("test fixture")
+            .push(cancellation_id.into());
         self.0.policy_calls.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(u64::from(
             self.0.delay.load(Ordering::SeqCst),
@@ -145,12 +160,17 @@ impl Policy {
         (true, false, HashMap::new())
     }
     fn cancel_check_authorization(&self, id: &str) {
-        self.0.cancelled.lock().unwrap().push(id.into());
+        self.0
+            .cancelled
+            .lock()
+            .expect("test fixture")
+            .push(id.into());
     }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(unsafe_code, reason = "Linux syscall ABI (getuid).")]
 async fn fresh_authority_rechecks_lock_owner_specific_fallback_and_cancels_pending_prompt() {
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     if uid < 1000 {
         return;

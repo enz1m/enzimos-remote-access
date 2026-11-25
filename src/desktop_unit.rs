@@ -140,7 +140,12 @@ fn execute(
         if let Some(installed) = &provider_identity {
             installed.matches(&grant["provider"])?;
         }
-        compositor_grant::publish(uid, configuration["view_only"].as_bool().unwrap())?;
+        compositor_grant::publish(
+            uid,
+            configuration["view_only"]
+                .as_bool()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+        )?;
         if let Some(installed) = &provider_identity {
             installed.matches(&grant["provider"])?;
         }

@@ -54,7 +54,9 @@ fn exact_proc_endpoints_socket_inode_and_listener_ownership() {
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getpid).")]
 fn native_kernel_observation_accepts_both_headers_without_opening_a_listener() {
     sockets::table().unwrap();
+    // SAFETY: getpid has no preconditions and cannot fail.
     let pid = unsafe { libc::getpid() } as u32;
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let uid = unsafe { libc::geteuid() };
     sockets::inodes(pid, uid).unwrap();
     assert!(sockets::inodes(0, uid).is_err());

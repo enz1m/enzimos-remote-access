@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the unattended desktop-sharing record.
 use enzimos_remote_access::{
     desktop_grant,
     desktop_unattended::{self, Store},
@@ -12,18 +13,19 @@ fn configuration() -> Value {
 }
 fn reviewed_network() -> Value {
     json!([network::identity(
-        "192.0.2.4".parse().unwrap(),
+        "192.0.2.4".parse().expect("test fixture"),
         "enp1s0",
         Some("home"),
         Some("0f8e4c1a-7b1d-4a8e-9f00-3b5a2c6d7e81"),
     )])
 }
 fn record(uid: u32) -> Value {
-    desktop_unattended::record(uid, &configuration(), &reviewed_network()).unwrap()
+    desktop_unattended::record(uid, &configuration(), &reviewed_network()).expect("test fixture")
 }
 #[allow(unsafe_code, reason = "Linux syscall ABI (getuid).")]
 fn store(root: &std::path::Path) -> Store {
-    Store::new(root, unsafe { libc::getuid() }, 1000).unwrap()
+    // SAFETY: getuid has no preconditions and cannot fail.
+    Store::new(root, unsafe { libc::getuid() }, 1000).expect("test fixture")
 }
 fn scratch() -> tempfile::TempDir {
     let work = std::env::var_os("ENZIMOS_TEST_TMPDIR").map_or_else(
@@ -33,7 +35,7 @@ fn scratch() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("unattended-")
         .tempdir_in(work)
-        .unwrap()
+        .expect("test fixture")
 }
 
 #[test]

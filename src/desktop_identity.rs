@@ -90,9 +90,8 @@ pub fn read(directory: &Path, uid: u32) -> Result<Identity> {
     )?;
     let password = credential
         .as_object_mut()
-        .unwrap()
-        .remove("password")
-        .unwrap();
+        .and_then(|credential| credential.remove("password"))
+        .ok_or_else(|| enzimos_platform::Error("desktop-private-identity-invalid".into()))?;
     let serde_json::Value::String(password) = password else {
         return Err(Error("desktop-private-identity-invalid".into()));
     };
@@ -135,9 +134,10 @@ fn renewal_due(directory: &Path, uid: u32) -> Result<bool> {
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 pub fn ensure(directory: &Path, uid: u32) -> Result<Identity> {
     require(
-        uid >= 1000
-            && uid < u32::MAX
+        (1000..u32::MAX).contains(&uid)
+            // SAFETY: getuid has no preconditions and cannot fail.
             && unsafe { libc::getuid() } == uid
+            // SAFETY: geteuid has no preconditions and cannot fail.
             && unsafe { libc::geteuid() } == uid,
         "desktop-ordinary-user-identity-required",
     )?;
@@ -220,7 +220,7 @@ pub fn ensure(directory: &Path, uid: u32) -> Result<Identity> {
     crypto(openssl::rand::rand_bytes(&mut random))?;
     let password = Zeroizing::new(URL_SAFE_NO_PAD.encode(&*random));
     // Password is emitted straight into zeroizing storage, never a clonable Value.
-    let credential = Zeroizing::new(format!("{{\"schema\":1,\"password\":\"{}\",\"certificate_sha256\":\"{}\",\"private_key_sha256\":\"{}\"}}", &*password, hash(&certificate), hash(&key)).into_bytes());
+    let credential = Zeroizing::new(format!("{{\"schema\":1,\"password\":\"{}\",\"certificate_sha256\":\"{}\",\"private_key_sha256\":\"{}\"}}", *password, hash(&certificate), hash(&key)).into_bytes());
     let named = files::directory(directory, Some(uid))?.metadata()?;
     let original = held.metadata()?;
     require(

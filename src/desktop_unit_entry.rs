@@ -25,6 +25,8 @@ fn execute() -> Result<()> {
         .filter(|s| s == "/run/systemd/notify");
     std::env::set_current_dir("/")?;
     for (name, _) in std::env::vars_os() {
+        // SAFETY: The process is still single-threaded here, so no other thread reads the
+        // environment.
         unsafe { std::env::remove_var(name) };
     }
     for (name, value) in [
@@ -33,9 +35,13 @@ fn execute() -> Result<()> {
         ("LANG", "C"),
         ("LC_ALL", "C"),
     ] {
+        // SAFETY: The process is still single-threaded here, so no other thread reads the
+        // environment.
         unsafe { std::env::set_var(name, value) };
     }
     if let Some(notify) = notify {
+        // SAFETY: The process is still single-threaded here, so no other thread reads the
+        // environment.
         unsafe { std::env::set_var("NOTIFY_SOCKET", notify) };
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()

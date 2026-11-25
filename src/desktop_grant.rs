@@ -35,7 +35,7 @@ fn positive(v: &Value) -> Result<u64> {
 pub fn session(bound: &Value, uid: u32) -> Result<()> {
     json::fields(bound, "uid id leader seat compositor wayland manager_owned")?;
     require(
-        bound["uid"].as_u64() == Some(account(uid)? as u64)
+        bound["uid"].as_u64() == Some(u64::from(account(uid)?))
             && bound["manager_owned"].is_boolean()
             && text(&bound["id"], b"_-")
             && text(&bound["seat"], b"_-"),
@@ -110,7 +110,7 @@ pub fn validate(
     }
     require(value["schema"].as_u64() == Some(1), "desktop-grant-invalid")?;
     require(
-        value["uid"].as_u64() == Some(account(uid)? as u64)
+        value["uid"].as_u64() == Some(u64::from(account(uid)?))
             && value["boot_id"].as_str() == Some(boot)
             && value["nonce"].as_str().is_some_and(|s| {
                 s.len() == 64
@@ -138,7 +138,11 @@ pub fn validate(
 }
 pub fn load(uid: u32) -> Result<Value> {
     let path = folder(uid)?.join("grant.json");
-    let parent = files::directory(path.parent().unwrap(), Some(0))?;
+    let parent = files::directory(
+        path.parent()
+            .ok_or_else(|| enzimos_platform::Error("missing parent".into()))?,
+        Some(0),
+    )?;
     let mut file = files::open_relative(&parent, Path::new("grant.json"))?;
     let m = file.metadata()?;
     require(
@@ -177,6 +181,7 @@ pub fn load(uid: u32) -> Result<Value> {
     reason = "Linux syscall ABI (fstatat, geteuid, unlinkat)."
 )]
 pub fn revoke(uid: u32) -> Result<()> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     require(unsafe { libc::geteuid() } == 0, "Root authority required")?;
     let directory = folder(uid)?;
     let held = files::directory(&directory, Some(0))?;
@@ -190,9 +195,12 @@ pub fn revoke(uid: u32) -> Result<()> {
         "desktop-grant-permissions",
     )?;
     use std::os::fd::AsRawFd;
+    // SAFETY: `libc::stat` is a plain C struct, for which all-zero bytes are a valid value.
     let mut named: libc::stat = unsafe { std::mem::zeroed() };
     let name = c"grant.json";
     require(
+        // SAFETY: `name` is a NUL-terminated literal, the stat buffer is writable, and `held` stays
+        // open.
         unsafe {
             libc::fstatat(
                 held.as_raw_fd(),
@@ -206,6 +214,7 @@ pub fn revoke(uid: u32) -> Result<()> {
         "desktop-grant-changed",
     )?;
     require(
+        // SAFETY: `name` is a NUL-terminated literal and `held` keeps the descriptor open.
         unsafe { libc::unlinkat(held.as_raw_fd(), name.as_ptr(), 0) } == 0,
         "desktop-grant-revocation-uncertain",
     )?;
@@ -214,6 +223,7 @@ pub fn revoke(uid: u32) -> Result<()> {
 }
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn publish(value: &Value, uid: u32, boot: &str, addresses: &BTreeSet<IpAddr>) -> Result<()> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     require(unsafe { libc::geteuid() } == 0, "Root authority required")?;
     let checked = validate(value, uid, boot, addresses)?;
     require(checked == *value, "desktop-grant-noncanonical")?;

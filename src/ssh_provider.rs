@@ -26,6 +26,7 @@ use zbus::Connection;
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn root_context() -> Result<()> {
     require(
+        // SAFETY: geteuid has no preconditions and cannot fail.
         unsafe { libc::geteuid() } == 0,
         "initial-root-service-required",
     )?;
@@ -258,7 +259,7 @@ impl ReviewedProvider for Ssh {
             .load()?
             .ok_or_else(|| Error("remote-owner-mismatch".into()))?;
         require(
-            current["uid"].as_u64() == Some(uid as u64),
+            current["uid"].as_u64() == Some(u64::from(uid)),
             "remote-owner-mismatch",
         )?;
         let plan = value!({"schema":1,"uid":uid,"previous_state_sha256":json::fingerprint(&current)?,"sessions":self.connections()?,"listener_stopped":false,"unrelated_sessions_signalled":false});
@@ -268,7 +269,7 @@ impl ReviewedProvider for Ssh {
         let current = self.state.load()?;
         if current
             .as_ref()
-            .is_some_and(|v| v["uid"].as_u64() != Some(uid as u64))
+            .is_some_and(|v| v["uid"].as_u64() != Some(u64::from(uid)))
         {
             return Ok(
                 value!({"schema":1,"owned_by_another_account":true,"configuration":null,"listening":self.listener_active()?,"connections":[]}),
@@ -487,10 +488,14 @@ async fn prepare_or_release(operation: &str, connection: Connection) -> Result<(
     )?;
     let keys = configuration["public_keys"]
         .as_array()
-        .unwrap()
+        .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
         .iter()
-        .map(|r| r["key"].as_str().unwrap())
-        .collect::<Vec<_>>()
+        .map(|r| {
+            r["key"]
+                .as_str()
+                .ok_or_else(|| Error("unexpected JSON value type".into()))
+        })
+        .collect::<Result<Vec<_>>>()?
         .join("\n")
         + "\n";
     require(

@@ -53,7 +53,9 @@ fn follow_kernel(pid: u32, uid: u32, name: &str) -> Result<File> {
         "desktop-kernel-identity-path",
     )?;
     let root = files::directory(&PathBuf::from(format!("/proc/{pid}")), Some(uid))?;
-    let name = CString::new(name).unwrap();
+    let name =
+        CString::new(name).map_err(|_| enzimos_platform::Error("invalid C string".into()))?;
+    // SAFETY: `name` is a NUL-terminated CString and `root` keeps the descriptor open.
     let fd = unsafe {
         libc::openat(
             root.as_raw_fd(),
@@ -62,6 +64,7 @@ fn follow_kernel(pid: u32, uid: u32, name: &str) -> Result<File> {
         )
     };
     require(fd >= 0, "desktop-process-identity-unavailable")?;
+    // SAFETY: `fd` was just returned by openat and is owned by nothing else.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 pub fn namespace(pid: u32, uid: u32) -> Result<[u64; 2]> {
@@ -176,13 +179,23 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
             .is_some_and(|s| (1..=3).contains(&s.len()) && s.bytes().all(|c| c.is_ascii_digit())),
         "desktop-wayland-socket-untrusted",
     )?;
-    let parent = files::directory(path.parent().unwrap(), Some(uid))?;
+    let parent = files::directory(
+        path.parent()
+            .ok_or_else(|| enzimos_platform::Error("missing parent".into()))?,
+        Some(uid),
+    )?;
     let p = parent.metadata()?;
     require(
         p.uid() == uid && p.mode() & 0o077 == 0,
         "desktop-wayland-socket-untrusted",
     )?;
-    let name = CString::new(path.file_name().unwrap().as_bytes()).unwrap();
+    let name = CString::new(
+        path.file_name()
+            .ok_or_else(|| enzimos_platform::Error("missing filename".into()))?
+            .as_bytes(),
+    )
+    .map_err(|_| enzimos_platform::Error("invalid C string".into()))?;
+    // SAFETY: `name` is a NUL-terminated CString and `parent` keeps the descriptor open.
     let node = unsafe {
         libc::openat(
             parent.as_raw_fd(),
@@ -191,12 +204,14 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
         )
     };
     require(node >= 0, "desktop-wayland-socket-untrusted")?;
+    // SAFETY: `node` was just returned by openat and is owned by nothing else.
     let node = unsafe { File::from_raw_fd(node) };
     let m = node.metadata()?;
     require(
         m.uid() == uid && m.mode() & libc::S_IFMT == libc::S_IFSOCK,
         "desktop-wayland-socket-untrusted",
     )?;
+    // SAFETY: socket takes no pointers.
     let fd = unsafe {
         libc::socket(
             libc::AF_UNIX,
@@ -205,8 +220,10 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
         )
     };
     require(fd >= 0, "desktop-wayland-peer-unavailable")?;
+    // SAFETY: `fd` was just returned by socket and is owned by nothing else.
     let socket = unsafe { File::from_raw_fd(fd) };
     let bytes = path.as_os_str().as_bytes();
+    // SAFETY: `libc::sockaddr_un` is a plain C struct, for which all-zero bytes are a valid value.
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     require(
         bytes.len() < address.sun_path.len(),
@@ -216,6 +233,7 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
     for (to, from) in address.sun_path.iter_mut().zip(bytes) {
         *to = *from as _;
     }
+    // SAFETY: `address` is a complete sockaddr_un passed with its size, and `socket` owns `fd`.
     let rc = unsafe {
         libc::connect(
             fd,
@@ -225,9 +243,11 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
     };
     // Unix backlog exhaustion returns EAGAIN; it does not mean a connection is pending.
     require(rc == 0, "desktop-wayland-peer-unavailable")?;
+    // SAFETY: `libc::ucred` is a plain C struct, for which all-zero bytes are a valid value.
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut size = std::mem::size_of_val(&credentials) as libc::socklen_t;
     require(
+        // SAFETY: The option buffer is `credentials` with its size in `size`, and `socket` is open.
         unsafe {
             libc::getsockopt(
                 socket.as_raw_fd(),
@@ -243,7 +263,12 @@ pub fn socket_peer(path: &Path, uid: u32, pid: u32) -> Result<Value> {
         "desktop-wayland-peer-untrusted",
     )?;
     let after = std::fs::symlink_metadata(path)?;
-    let parent_after = files::directory(path.parent().unwrap(), Some(uid))?.metadata()?;
+    let parent_after = files::directory(
+        path.parent()
+            .ok_or_else(|| enzimos_platform::Error("missing parent".into()))?,
+        Some(uid),
+    )?
+    .metadata()?;
     require(
         (m.dev(), m.ino(), m.uid(), m.mode())
             == (after.dev(), after.ino(), after.uid(), after.mode())
@@ -259,14 +284,23 @@ pub fn verify(bound: &Value) -> Result<Retained> {
         .ok_or_else(|| Error("desktop-session-proof-invalid".into()))?;
     desktop_grant::session(bound, uid)?;
     let proof = &bound["compositor"];
-    let pid = proof["pid"].as_u64().unwrap() as u32;
+    let pid = proof["pid"]
+        .as_u64()
+        .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
+        as u32;
     let ns = [
-        proof["mount_namespace"][0].as_u64().unwrap(),
-        proof["mount_namespace"][1].as_u64().unwrap(),
+        proof["mount_namespace"][0]
+            .as_u64()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+        proof["mount_namespace"][1]
+            .as_u64()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
     ];
     let retained = Retained::open(
         pid,
-        proof["start_ticks"].as_u64().unwrap(),
+        proof["start_ticks"]
+            .as_u64()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
         uid,
         &[PathBuf::from(COMPOSITOR)],
     )?;
@@ -274,15 +308,23 @@ pub fn verify(bound: &Value) -> Result<Retained> {
         process(
             pid,
             uid,
-            bound["id"].as_str().unwrap(),
-            bound["manager_owned"].as_bool().unwrap(),
+            bound["id"]
+                .as_str()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+            bound["manager_owned"]
+                .as_bool()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
             ns,
         )? == *proof,
         "desktop-compositor-replaced",
     )?;
     require(
         socket_peer(
-            Path::new(bound["wayland"]["path"].as_str().unwrap()),
+            Path::new(
+                bound["wayland"]["path"]
+                    .as_str()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+            ),
             uid,
             pid,
         )? == bound["wayland"],

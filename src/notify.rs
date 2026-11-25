@@ -20,6 +20,7 @@ pub(crate) fn send(path: &Path, message: &[u8], descriptor: Option<BorrowedFd<'_
         "desktop-listener-notification-invalid",
     )?;
     let bytes = path.as_os_str().as_bytes();
+    // SAFETY: `libc::sockaddr_un` is a plain C struct, for which all-zero bytes are a valid value.
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     require(
         path.is_absolute() && !bytes.contains(&0) && bytes.len() < address.sun_path.len(),
@@ -35,6 +36,7 @@ pub(crate) fn send(path: &Path, message: &[u8], descriptor: Option<BorrowedFd<'_
         iov_base: message.as_ptr().cast_mut().cast(),
         iov_len: message.len(),
     };
+    // SAFETY: `libc::msghdr` is a plain C struct, for which all-zero bytes are a valid value.
     let mut header: libc::msghdr = unsafe { std::mem::zeroed() };
     header.msg_name = (&mut address as *mut libc::sockaddr_un).cast();
     header.msg_namelen = std::mem::size_of_val(&address) as _;
@@ -45,11 +47,14 @@ pub(crate) fn send(path: &Path, message: &[u8], descriptor: Option<BorrowedFd<'_
     if let Some(fd) = descriptor {
         header.msg_control = control.as_mut_ptr().cast();
         header.msg_controllen =
+            // SAFETY: CMSG_SPACE only computes a size.
             unsafe { libc::CMSG_SPACE(std::mem::size_of::<i32>() as _) } as usize;
         require(
             header.msg_controllen <= std::mem::size_of_val(&control),
             "desktop-listener-descriptor-bound",
         )?;
+        // SAFETY: `header` points at `control`, whose size was checked to hold one descriptor
+        // header.
         unsafe {
             let cmsg = libc::CMSG_FIRSTHDR(&header);
             (*cmsg).cmsg_level = libc::SOL_SOCKET;
@@ -59,6 +64,7 @@ pub(crate) fn send(path: &Path, message: &[u8], descriptor: Option<BorrowedFd<'_
         }
     }
     require(
+        // SAFETY: `header` and the buffers it points at outlive the call.
         unsafe { libc::sendmsg(socket.as_raw_fd(), &header, libc::MSG_NOSIGNAL) }
             == message.len() as isize,
         "desktop-listener-store-send-failed",
@@ -68,10 +74,13 @@ pub(crate) fn send(path: &Path, message: &[u8], descriptor: Option<BorrowedFd<'_
 pub(crate) fn barrier(path: &Path) -> Result<()> {
     let mut pair = [-1; 2];
     require(
+        // SAFETY: `pair` has room for the two descriptors pipe2 writes.
         unsafe { libc::pipe2(pair.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } == 0,
         "desktop-listener-store-receipt-uncertain",
     )?;
+    // SAFETY: pipe2 succeeded, so `pair[0]` is a fresh descriptor owned by nothing else.
     let read = unsafe { File::from_raw_fd(pair[0]) };
+    // SAFETY: pipe2 succeeded, so `pair[1]` is a fresh descriptor owned by nothing else.
     let write = unsafe { File::from_raw_fd(pair[1]) };
     use std::os::fd::AsFd;
     send(path, b"BARRIER=1", Some(write.as_fd()))?;
@@ -88,6 +97,7 @@ pub(crate) fn barrier(path: &Path) -> Result<()> {
             events: 0,
             revents: 0,
         };
+        // SAFETY: `poll` is one writable pollfd and the count is 1.
         let rc = unsafe {
             libc::poll(
                 &mut poll,
@@ -126,16 +136,20 @@ mod tests {
             iov_base: bytes.as_mut_ptr().cast(),
             iov_len: bytes.len(),
         };
+        // SAFETY: `libc::msghdr` is a plain C struct, for which all-zero bytes are a valid value.
         let mut header: libc::msghdr = unsafe { std::mem::zeroed() };
         header.msg_iov = &mut iov;
         header.msg_iovlen = 1;
         header.msg_control = control.as_mut_ptr().cast();
         header.msg_controllen = std::mem::size_of_val(&control);
         let count =
+            // SAFETY: `header` points at buffers that outlive the call.
             unsafe { libc::recvmsg(socket.as_raw_fd(), &mut header, libc::MSG_CMSG_CLOEXEC) };
         assert!(count > 0 && header.msg_flags & (libc::MSG_TRUNC | libc::MSG_CTRUNC) == 0);
+        // SAFETY: `header` was filled by recvmsg.
         let c = unsafe { libc::CMSG_FIRSTHDR(&header) };
         assert!(!c.is_null());
+        // SAFETY: `c` is a non-null header recvmsg wrote inside `control`.
         unsafe {
             assert_eq!((*c).cmsg_level, libc::SOL_SOCKET);
             assert_eq!((*c).cmsg_type, libc::SCM_RIGHTS);

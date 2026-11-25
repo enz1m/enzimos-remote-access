@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the firewall lease kept across firewalld restarts.
 use enzimos_platform::{Error, Result};
 use enzimos_remote_access::{
     firewall::{Interface, Rule},
@@ -39,6 +40,7 @@ fn lease() -> Vec<Rule> {
 fn journal<'a>(path: &'a Path, firewalld: &'a mut Firewalld) -> Journal<'a, Firewalld> {
     Journal {
         path,
+        // SAFETY: geteuid has no preconditions and cannot fail.
         owner: unsafe { libc::geteuid() },
         boot_id: "00000000-0000-0000-0000-000000000001",
         interface: firewalld,
@@ -53,7 +55,7 @@ fn fixture() -> tempfile::TempDir {
         .prefix("rust-firewall-lease-")
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(work)
-        .unwrap()
+        .expect("test fixture")
 }
 
 fn present(journal: &Journal<'_, Firewalld>) -> BTreeSet<String> {

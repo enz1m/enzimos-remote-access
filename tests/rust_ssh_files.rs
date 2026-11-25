@@ -2,7 +2,7 @@
 use enzimos_platform::{files, json};
 use enzimos_remote_access::ssh_files::Layout;
 use serde_json::json as value;
-use std::{os::unix::fs::PermissionsExt, path::Path};
+use std::os::unix::fs::PermissionsExt;
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 fn native_host_identity_is_private_persistent_and_never_replaced_after_partial_creation() {
@@ -15,6 +15,7 @@ fn native_host_identity_is_private_persistent_and_never_replaced_after_partial_c
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(work)
         .unwrap();
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let owner = unsafe { libc::geteuid() };
     let layout = Layout {
         state: temp.path().join("ssh"),

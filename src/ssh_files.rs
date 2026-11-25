@@ -103,6 +103,7 @@ impl Layout {
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub fn host_identity(&self) -> Result<String> {
         require(
+            // SAFETY: geteuid has no preconditions and cannot fail.
             unsafe { libc::geteuid() } == self.owner,
             "host-key-writer-required",
         )?;

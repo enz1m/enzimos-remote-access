@@ -63,8 +63,13 @@ pub fn apply_checked<P: Provider, F: FnMut(&mut P) -> Result<()>>(
         provider.stop_listening()?;
         provider.release_firewall()?;
         provider.publish(prepared)?;
-        let enabled = configuration["enabled"].as_bool().unwrap();
-        let autostart = enabled && configuration["autostart"].as_bool().unwrap();
+        let enabled = configuration["enabled"]
+            .as_bool()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?;
+        let autostart = enabled
+            && configuration["autostart"]
+                .as_bool()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?;
         provider.set_autostart(autostart)?;
         if enabled {
             provider.start_listening()?;

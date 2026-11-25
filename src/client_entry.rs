@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: MIT
+#[expect(
+    clippy::print_stdout,
+    reason = "The help text and JSON result are the command's output."
+)]
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args == ["--help"] || args == ["-h"] {

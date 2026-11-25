@@ -63,32 +63,39 @@ fn anonymous_credential_is_sealed_private_and_closed_by_ownership() {
     let meta = reader.metadata().unwrap();
     assert_eq!(meta.nlink(), 0);
     assert_eq!(meta.mode() & 0o7777, 0o600);
+    // SAFETY: getuid has no preconditions and cannot fail.
     assert_eq!(meta.uid(), unsafe { libc::getuid() });
     assert_eq!(
+        // SAFETY: F_GET_SEALS takes no pointers and `fd` keeps `raw` open.
         unsafe { libc::fcntl(raw, libc::F_GET_SEALS) },
         desktop_rdp::SEALS
     );
     assert_ne!(
+        // SAFETY: F_GETFD takes no pointers and `fd` keeps `raw` open.
         unsafe { libc::fcntl(raw, libc::F_GETFD) } & libc::FD_CLOEXEC,
         0
     );
     let mut bytes = vec![0; 43];
     assert_eq!(
+        // SAFETY: The buffer pointer and length describe `bytes`, and `fd` keeps `raw` open.
         unsafe { libc::pread(raw, bytes.as_mut_ptr().cast(), bytes.len(), 0) },
         43
     );
     assert_eq!(bytes, password.as_bytes());
+    // SAFETY: The buffer is a 1-byte literal and `fd` keeps `raw` open.
     assert_eq!(unsafe { libc::pwrite(raw, b"B".as_ptr().cast(), 1, 0) }, -1);
     assert_eq!(
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::EPERM)
     );
+    // SAFETY: ftruncate takes no pointers and `fd` keeps `raw` open.
     assert_eq!(unsafe { libc::ftruncate(raw, 0) }, -1);
     // Receiver uses pread, so neither party depends on the shared write offset.
     let mut remaining = Vec::new();
     reader.read_to_end(&mut remaining).unwrap();
     assert!(remaining.is_empty());
     drop(fd);
+    // SAFETY: F_GETFD takes no pointers; it only probes a closed descriptor number.
     assert_eq!(unsafe { libc::fcntl(raw, libc::F_GETFD) }, -1);
     for bad in [
         "short".to_owned(),
@@ -107,6 +114,7 @@ fn child_executes_the_retained_elf_and_propagates_exec_failure() {
     let argv = vec![std::ffi::CString::new("retained-true").unwrap()];
     let mut command = std::process::Command::new("/usr/bin/false");
     command.env_clear();
+    // SAFETY: The pre_exec closure only calls `exec_original`, which uses preallocated arguments.
     unsafe {
         command.pre_exec(move || desktop_rdp::exec_original(&original, &argv, &[]));
     }
@@ -115,6 +123,7 @@ fn child_executes_the_retained_elf_and_propagates_exec_failure() {
     let argv = vec![std::ffi::CString::new("invalid-image").unwrap()];
     let mut command = std::process::Command::new("/usr/bin/true");
     command.env_clear();
+    // SAFETY: The pre_exec closure only calls `exec_original`, which uses preallocated arguments.
     unsafe {
         command.pre_exec(move || desktop_rdp::exec_original(&original, &argv, &[]));
     }

@@ -34,6 +34,7 @@ pub fn body(uid: u32, view_only: bool) -> Result<Vec<u8>> {
 }
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 pub fn publish(uid: u32, view_only: bool) -> Result<()> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     require(unsafe { libc::geteuid() } == 0, "Root authority required")?;
     let groups = files::read_kernel(
         &PathBuf::from(format!("/proc/{}/cgroup", std::process::id())),
@@ -54,6 +55,7 @@ pub fn publish(uid: u32, view_only: bool) -> Result<()> {
     reason = "Linux syscall ABI (fstatat, geteuid, unlinkat)."
 )]
 pub fn revoke(uid: u32) -> Result<()> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     require(unsafe { libc::geteuid() } == 0, "Root authority required")?;
     match std::fs::symlink_metadata(BASE) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -73,8 +75,11 @@ pub fn revoke(uid: u32) -> Result<()> {
     let file = files::open_relative(&directory, Path::new(&file_name))?;
     let before = file.metadata()?;
     let c = CString::new(file_name).map_err(|_| Error("compositor-grant-file-unsafe".into()))?;
+    // SAFETY: `libc::stat` is a plain C struct, for which all-zero bytes are a valid value.
     let mut observed: libc::stat = unsafe { std::mem::zeroed() };
     require(
+        // SAFETY: The name is a NUL-terminated CString, `observed` is a writable `libc::stat`, and
+        // `directory` stays open.
         unsafe {
             libc::fstatat(
                 directory.as_raw_fd(),
@@ -91,6 +96,7 @@ pub fn revoke(uid: u32) -> Result<()> {
         "compositor-grant-file-unsafe",
     )?;
     require(
+        // SAFETY: `c` is a NUL-terminated CString and `directory` keeps the descriptor open.
         unsafe { libc::unlinkat(directory.as_raw_fd(), c.as_ptr(), 0) } == 0,
         "compositor-grant-revocation-uncertain",
     )?;

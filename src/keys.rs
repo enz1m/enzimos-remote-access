@@ -15,7 +15,10 @@ impl<'a> Reader<'a> {
             .data
             .get(self.position..self.position + 4)
             .ok_or_else(|| Error("public-key-truncated".into()))?;
-        let size = u32::from_be_bytes(n.try_into().unwrap()) as usize;
+        let size = u32::from_be_bytes(
+            n.try_into()
+                .map_err(|_| enzimos_platform::Error("value out of range".into()))?,
+        ) as usize;
         self.position += 4;
         require(size > 0 && size <= max, "public-key-field-bound")?;
         let value = self
@@ -57,14 +60,15 @@ pub fn public_key(value: &str) -> Result<Value> {
     let hardware = name.starts_with("sk-");
     match name {
         "ssh-ed25519" | "sk-ssh-ed25519@openssh.com" => {
-            require(reader.field(32)?.len() == 32, "public-key-ed25519-size")?
+            require(reader.field(32)?.len() == 32, "public-key-ed25519-size")?;
         }
         "ssh-rsa" => {
             let exponent = reader.integer()?;
             let exponent = exponent
                 .iter()
                 .try_fold(0u64, |v, b| {
-                    v.checked_mul(256).and_then(|v| v.checked_add(*b as u64))
+                    v.checked_mul(256)
+                        .and_then(|v| v.checked_add(u64::from(*b)))
                 })
                 .ok_or_else(|| Error("public-key-rsa-strength".into()))?;
             let modulus = reader.integer()?;
@@ -75,10 +79,14 @@ pub fn public_key(value: &str) -> Result<Value> {
             let bits =
                 (modulus.len() - first - 1) * 8 + (8 - modulus[first].leading_zeros() as usize);
             require(
-                (3..=u32::MAX as u64).contains(&exponent)
+                (3..=u64::from(u32::MAX)).contains(&exponent)
                     && exponent % 2 == 1
                     && (3072..=8192).contains(&bits)
-                    && modulus.last().unwrap() & 1 == 1,
+                    && modulus
+                        .last()
+                        .ok_or_else(|| enzimos_platform::Error("missing element".into()))?
+                        & 1
+                        == 1,
                 "public-key-rsa-strength",
             )?;
         }
@@ -87,7 +95,8 @@ pub fn public_key(value: &str) -> Result<Value> {
             let expected = if hardware {
                 "nistp256"
             } else {
-                n.strip_prefix("ecdsa-sha2-").unwrap()
+                n.strip_prefix("ecdsa-sha2-")
+                    .ok_or_else(|| enzimos_platform::Error("unexpected name".into()))?
             };
             let length = match curve {
                 b"nistp256" => 65,
@@ -128,7 +137,14 @@ pub fn key_list(values: &Value) -> Result<Vec<Value>> {
                     .ok_or_else(|| Error("public-key-input-invalid".into()))?,
             )?;
             require(
-                seen.insert(row["fingerprint"].as_str().unwrap().to_owned()),
+                seen.insert(
+                    row["fingerprint"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            enzimos_platform::Error("unexpected JSON value type".into())
+                        })?
+                        .to_owned(),
+                ),
                 "public-key-duplicate",
             )?;
             Ok(row)

@@ -22,7 +22,7 @@ async fn changed(connection: &zbus::Connection) {
             ),
         )
         .await
-        .unwrap();
+        .expect("test fixture");
 }
 async fn wait_lost(watch: &Watch) {
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -31,7 +31,7 @@ async fn wait_lost(watch: &Watch) {
         }
     })
     .await
-    .unwrap();
+    .expect("test fixture");
 }
 async fn private_bus() -> (tempfile::TempDir, String, tokio::process::Child) {
     let work = std::path::PathBuf::from(
@@ -41,7 +41,7 @@ async fn private_bus() -> (tempfile::TempDir, String, tokio::process::Child) {
     let temp = tempfile::Builder::new()
         .prefix("desktop-bus-")
         .tempdir_in(work)
-        .unwrap();
+        .expect("test fixture");
     let address = format!("unix:path={}", temp.path().join("bus").display());
     let mut daemon = tokio::process::Command::new("/usr/bin/dbus-daemon")
         .args([
@@ -58,24 +58,27 @@ async fn private_bus() -> (tempfile::TempDir, String, tokio::process::Child) {
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .unwrap();
-    let mut output = BufReader::new(daemon.stdout.take().unwrap());
+        .expect("test fixture");
+    let mut output = BufReader::new(daemon.stdout.take().expect("test fixture"));
     let mut line = String::new();
     tokio::time::timeout(Duration::from_secs(3), output.read_line(&mut line))
         .await
-        .unwrap()
-        .unwrap();
-    assert!(line.starts_with(&address));
+        .expect("test fixture")
+        .expect("test fixture");
+    assert!(
+        line.starts_with(&address),
+        "dbus-daemon reports the requested address"
+    );
     (temp, address, daemon)
 }
 async fn named(address: &str, name: &str) -> zbus::Connection {
     Builder::address(address)
-        .unwrap()
+        .expect("test fixture")
         .name(name.to_owned())
-        .unwrap()
+        .expect("test fixture")
         .build()
         .await
-        .unwrap()
+        .expect("test fixture")
 }
 async fn quiet(watch: &mut Watch) -> bool {
     tokio::time::timeout(Duration::from_millis(60), watch.changed())

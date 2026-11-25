@@ -41,7 +41,12 @@ pub fn command(configuration: &Value, directory: &Path, listener_fd: i32) -> Res
         format!("--config={}", directory.join("wayvnc.conf").display()),
         format!("--socket={}", directory.join("control.sock").display()),
         "--log-level=error".into(),
-        format!("--max-fps={}", checked["max_fps"].as_u64().unwrap()),
+        format!(
+            "--max-fps={}",
+            checked["max_fps"]
+                .as_u64()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
+        ),
         "--disable-resizing".into(),
     ];
     if checked["view_only"] == true {
@@ -96,6 +101,7 @@ struct Capture {
 impl Capture {
     #[allow(unsafe_code, reason = "Linux syscall ABI (syscall).")]
     fn signal(&self, value: i32) -> Result<()> {
+        // SAFETY: The siginfo pointer is null and `self` keeps the pidfd open.
         let rc = unsafe {
             libc::syscall(
                 libc::SYS_pidfd_send_signal,
@@ -138,14 +144,18 @@ pub async fn run(
 ) -> Result<()> {
     desktop_grant::account(uid)?;
     require(
+        // SAFETY: getuid has no preconditions and cannot fail.
         unsafe { libc::getuid() } == uid
+            // SAFETY: geteuid has no preconditions and cannot fail.
             && unsafe { libc::geteuid() } == uid
-            && grant["uid"].as_u64() == Some(uid as u64),
+            && grant["uid"].as_u64() == Some(u64::from(uid)),
         "desktop-ordinary-user-worker-required",
     )?;
     desktop_grant::session(&grant["session"], uid)?;
     let session = Session::new(bus.clone()).await?;
-    let session_id = grant["session"]["id"].as_str().unwrap();
+    let session_id = grant["session"]["id"]
+        .as_str()
+        .ok_or_else(|| Error("unexpected JSON value type".into()))?;
     let mut watch = Watch::new(&bus, &session, session_id).await?;
     let mut term = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
@@ -160,7 +170,7 @@ pub async fn run(
             })
             .ok_or_else(|| Error("desktop-grant-invalid".into()))?
             .get(..16)
-            .unwrap(),
+            .ok_or_else(|| enzimos_platform::Error("missing element".into()))?,
     );
     let rdp = crate::desktop_rdp::selected(&grant["configuration"]);
     if rdp {
@@ -169,7 +179,9 @@ pub async fn run(
             rlim_max: 0,
         };
         require(
+            // SAFETY: `no_core` is a valid rlimit that outlives the call.
             unsafe { libc::setrlimit(libc::RLIMIT_CORE, &no_core) } == 0
+                // SAFETY: prctl(PR_SET_DUMPABLE) takes no pointers.
                 && unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) } == 0,
             "desktop-worker-privacy-unavailable",
         )?;
@@ -215,8 +227,10 @@ pub async fn run(
         fixed.mode() & 0o111 != 0,
         "desktop-capture-program-unavailable",
     )?;
+    // SAFETY: F_DUPFD_CLOEXEC takes no pointers and `connection` keeps the source open.
     let fd = unsafe { libc::fcntl(connection.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 64) };
     require(fd >= 0, "desktop-listener-duplication-unavailable")?;
+    // SAFETY: `fd` is a fresh duplicate owned by nothing else.
     let inherited = unsafe { OwnedFd::from_raw_fd(fd) };
     require(
         (64..=1024).contains(&fd),
@@ -241,9 +255,13 @@ pub async fn run(
         .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
         .env(
             "WAYLAND_DISPLAY",
-            Path::new(grant["session"]["wayland"]["path"].as_str().unwrap())
-                .file_name()
-                .unwrap(),
+            Path::new(
+                grant["session"]["wayland"]["path"]
+                    .as_str()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+            )
+            .file_name()
+            .ok_or_else(|| enzimos_platform::Error("missing filename".into()))?,
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -278,15 +296,17 @@ pub async fn run(
                 .map_err(|_| Error("desktop-capture-environment-invalid".into()))
         })
         .collect::<Result<Vec<_>>>()?;
+    // SAFETY: The pre_exec closure only calls fcntl and `exec_original`, both async-signal-safe
+    // with preallocated arguments.
     unsafe {
         capture.pre_exec(move || {
             if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            if let Some(secret) = credential_fd {
-                if libc::fcntl(secret, libc::F_SETFD, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
+            if let Some(secret) = credential_fd
+                && libc::fcntl(secret, libc::F_SETFD, 0) < 0
+            {
+                return Err(std::io::Error::last_os_error());
             }
             if let Some(executable) = &executable {
                 return crate::desktop_rdp::exec_original(executable, &argv, &environment);
@@ -301,10 +321,12 @@ pub async fn run(
     let pid = child
         .id()
         .ok_or_else(|| Error("desktop-capture-process-unavailable".into()))?;
+    // SAFETY: pidfd_open takes no pointers.
     let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 };
     require(pidfd >= 0, "desktop-capture-process-unavailable")?;
     let mut capture = Capture {
         child,
+        // SAFETY: `pidfd` was just returned by pidfd_open and is owned by nothing else.
         pidfd: unsafe { OwnedFd::from_raw_fd(pidfd) },
     };
     let result: Result<()> = async {
@@ -386,10 +408,12 @@ mod tests {
             .spawn()
             .unwrap();
         let pid = child.id().unwrap();
+        // SAFETY: pidfd_open takes no pointers.
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 };
         assert!(fd >= 0);
         let mut capture = Capture {
             child,
+            // SAFETY: `fd` was just returned by pidfd_open and is owned by nothing else.
             pidfd: unsafe { OwnedFd::from_raw_fd(fd) },
         };
         capture.stop().await.unwrap();

@@ -394,7 +394,7 @@ pub fn receipt_validate(record: &Value, uid: u32) -> Result<()> {
     desktop_grant::account(uid)?;
     require(
         record["schema"].as_u64() == Some(1)
-            && record["uid"].as_u64() == Some(uid as u64)
+            && record["uid"].as_u64() == Some(u64::from(uid))
             && record["boot_id"].as_str().is_some_and(|s| {
                 s.len() == 36
                     && s.bytes().enumerate().all(|(i, b)| {
@@ -467,7 +467,7 @@ impl Reviewed for Desktop {
             .block_on(self.session.discover(peer.uid, &peer.id))?;
         let ip = checked["listen_address"]
             .as_str()
-            .unwrap()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
             .parse::<IpAddr>()
             .map_err(|_| Error("desktop-listen-address-unavailable".into()))?;
         let interface = addresses

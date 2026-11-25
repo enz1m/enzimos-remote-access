@@ -2,7 +2,7 @@
 use enzimos_platform::{files, json};
 use enzimos_remote_access::connections::{self, Tracker};
 use serde_json::json as value;
-use std::{os::unix::fs::PermissionsExt, path::Path};
+use std::os::unix::fs::PermissionsExt;
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
 fn connection_leases_are_typed_boot_and_account_bound_without_trusting_pids_alone() {
@@ -41,6 +41,7 @@ fn connection_leases_are_typed_boot_and_account_bound_without_trusting_pids_alon
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(work)
         .unwrap();
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let owner = unsafe { libc::geteuid() };
     files::atomic(
         &temp.path().join("connections.json"),

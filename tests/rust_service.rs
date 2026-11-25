@@ -4,15 +4,15 @@ use serde_json::json;
 use zbus::{Message, message::Flags};
 fn call(member: &str, has_body: bool) -> Message {
     let builder = Message::method_call(service::PATH, member)
-        .unwrap()
+        .expect("test fixture")
         .interface(service::NAME)
-        .unwrap()
+        .expect("test fixture")
         .sender(":1.27")
-        .unwrap();
+        .expect("test fixture");
     if has_body {
-        builder.build(&"{\"schema\":1}").unwrap()
+        builder.build(&"{\"schema\":1}").expect("test fixture")
     } else {
-        builder.build(&()).unwrap()
+        builder.build(&()).expect("test fixture")
     }
 }
 #[test]
@@ -105,6 +105,7 @@ fn uncertain_desktop_receipts_are_exact_account_and_boot_bound() {
             vec!["prepare", "1000"],
         ),
     ] {
+        // SAFETY: geteuid has no preconditions and cannot fail.
         if unsafe { libc::geteuid() } == 0 && args == ["prepare", "1000"] {
             continue;
         }

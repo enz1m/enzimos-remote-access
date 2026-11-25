@@ -11,7 +11,7 @@ async fn abandoned_blocking_job_retains_its_slot_and_notifies_on_final_retiremen
     assert!(slots.acquire().is_err());
     let retained = permits.pop().unwrap();
     let gate = Arc::new(Barrier::new(2));
-    let worker_gate = gate.clone();
+    let worker_gate = std::sync::Arc::clone(&gate);
     let (entered, ready) = tokio::sync::oneshot::channel();
     let job = tokio::task::spawn_blocking(move || {
         entered.send(()).unwrap();
@@ -26,7 +26,7 @@ async fn abandoned_blocking_job_retains_its_slot_and_notifies_on_final_retiremen
     let remaining = (0..7).map(|_| slots.acquire().unwrap()).collect::<Vec<_>>();
     assert!(slots.acquire().is_err());
     drop(remaining);
-    let waiter_slots = slots.clone();
+    let waiter_slots = std::sync::Arc::clone(&slots);
     let waiter = tokio::spawn(async move {
         waiter_slots.settled().await;
     });

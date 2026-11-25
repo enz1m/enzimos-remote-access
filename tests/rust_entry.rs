@@ -18,6 +18,7 @@ fn unit_entry_rejects_unrecognized_operations_and_unprivileged_startup_before_bu
                 .contains("unit-operation-unavailable")
         );
     }
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if unsafe { libc::geteuid() } != 0 {
         let result = Command::new(binary)
             .arg("prepare")

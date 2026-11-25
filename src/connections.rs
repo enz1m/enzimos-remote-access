@@ -30,7 +30,7 @@ pub fn validate(v: &Value) -> Result<Vec<Value>> {
         v["schema"].as_u64() == Some(1)
             && v["uid"]
                 .as_u64()
-                .is_some_and(|u| (1000..u32::MAX as u64).contains(&u))
+                .is_some_and(|u| (1000..u64::from(u32::MAX)).contains(&u))
             && v["boot_id"].as_str().is_some_and(|s| {
                 s.len() == 36
                     && s.bytes().enumerate().all(|(i, b)| {
@@ -166,7 +166,7 @@ impl Tracker {
         };
         let value = json::decode(&body, 131072)?;
         let rows = validate(&value)?;
-        if value["boot_id"] == self.boot_id && value["uid"].as_u64() == Some(self.uid as u64) {
+        if value["boot_id"] == self.boot_id && value["uid"].as_u64() == Some(u64::from(self.uid)) {
             Ok(rows)
         } else {
             Ok(Vec::new())
@@ -187,6 +187,7 @@ impl Tracker {
     pub fn query(&self, main: u32) -> Result<Vec<Value>> {
         require(
             self.owner == 0
+                // SAFETY: geteuid has no preconditions and cannot fail.
                 && unsafe { libc::geteuid() } == 0
                 && (1000..u32::MAX).contains(&self.uid)
                 && self.port > 0
@@ -238,14 +239,14 @@ impl Tracker {
                 if socket.state != "01"
                     || !crate::config::listen_addresses(&row["address"], row.get("addresses"))?
                         .contains(&socket.address)
-                    || row["port"].as_u64() != Some(socket.port as u64)
+                    || row["port"].as_u64() != Some(u64::from(socket.port))
                 {
                     continue;
                 }
                 let item=found.entry(inode).or_insert_with(||value!({"socket_inode":inode,"remote_address":socket.remote_address.to_string(),"remote_port":socket.remote_port,"processes":[]}));
                 item["processes"]
                     .as_array_mut()
-                    .unwrap()
+                    .ok_or_else(|| Error("unexpected JSON value type".into()))?
                     .push(value!({"pid":pid,"start_ticks":process.stat.start_ticks}));
             }
             current.push(row);
@@ -262,6 +263,7 @@ impl Tracker {
         mut before_commit: F,
     ) -> Result<()> {
         require(
+            // SAFETY: geteuid has no preconditions and cannot fail.
             self.owner == 0 && unsafe { libc::geteuid() } == 0 && rows.len() <= 512,
             "ssh-disconnect-root-required",
         )?;

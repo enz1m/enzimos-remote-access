@@ -72,7 +72,13 @@ pub fn locked(p: &Properties, bound: &Value) -> Result<bool> {
         .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(|| Error("desktop-session-proof-invalid".into()))?;
     desktop_grant::session(bound, uid)?;
-    let observed = identity(p, uid, bound["id"].as_str().unwrap())?;
+    let observed = identity(
+        p,
+        uid,
+        bound["id"]
+            .as_str()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+    )?;
     for key in ["uid", "id", "leader", "seat"] {
         require(observed[key] == bound[key], "desktop-session-changed")?;
     }
@@ -215,6 +221,7 @@ impl Session {
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub async fn manager_pid(&self, uid: u32, id: &str) -> Result<u32> {
         require(
+            // SAFETY: geteuid has no preconditions and cannot fail.
             unsafe { libc::geteuid() } == 0,
             "Root desktop discovery required",
         )?;
@@ -331,7 +338,14 @@ impl Session {
             .and_then(|n| u32::try_from(n).ok())
             .ok_or_else(|| Error("desktop-session-proof-invalid".into()))?;
         desktop_grant::session(bound, uid)?;
-        let observed = self.values(uid, bound["id"].as_str().unwrap()).await?;
+        let observed = self
+            .values(
+                uid,
+                bound["id"]
+                    .as_str()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+            )
+            .await?;
         for key in ["uid", "id", "leader", "seat"] {
             require(observed[key] == bound[key], "desktop-session-changed")?;
         }
@@ -341,7 +355,14 @@ impl Session {
             .map_err(|_| Error("desktop-session-observation-unavailable".into()))??;
         // A lock/logout event during process observation also refuses admission.
         require(
-            self.values(uid, bound["id"].as_str().unwrap()).await? == observed,
+            self.values(
+                uid,
+                bound["id"]
+                    .as_str()
+                    .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+            )
+            .await?
+                == observed,
             "desktop-session-changed",
         )?;
         Ok(retained)
@@ -352,13 +373,22 @@ impl Session {
             .and_then(|n| u32::try_from(n).ok())
             .ok_or_else(|| Error("desktop-session-proof-invalid".into()))?;
         desktop_grant::session(bound, uid)?;
-        self.manager_pid(uid, bound["id"].as_str().unwrap()).await?;
+        self.manager_pid(
+            uid,
+            bound["id"]
+                .as_str()
+                .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
+        )
+        .await?;
         self.verify_granted(bound).await
     }
     pub async fn discover(&self, uid: u32, id: &str) -> Result<Value> {
         let base = self.values(uid, id).await?;
         let manager = self.manager_pid(uid, id).await?;
-        let leader = base["leader"].as_u64().unwrap() as u32;
+        let leader = base["leader"]
+            .as_u64()
+            .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?
+            as u32;
         let identifier = id.to_owned();
         let mut bound = tokio::task::spawn_blocking(move || -> Result<Value> {
             let ns = desktop_binding::namespace(1, 0)?;
@@ -376,7 +406,7 @@ impl Session {
                 }
             }
             require(matches.len() == 1, "desktop-owned-compositor-unavailable")?;
-            let proof = matches.pop().unwrap();
+            let proof = matches.pop().ok_or_else(|| enzimos_platform::Error("missing element".into()))?;
             let runtime = PathBuf::from(format!("/run/user/{uid}"));
             let mut sockets = Vec::new();
             let mut count = 0;
@@ -394,7 +424,7 @@ impl Session {
                 if let Ok(socket) = desktop_binding::socket_peer(
                     &entry.path(),
                     uid,
-                    proof["pid"].as_u64().unwrap() as u32,
+                    proof["pid"].as_u64().ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))? as u32,
                 ) {
                     sockets.push(socket);
                 }
@@ -403,7 +433,7 @@ impl Session {
                 sockets.len() == 1,
                 "desktop-owned-wayland-socket-unavailable",
             )?;
-            Ok(value!({"compositor":proof,"wayland":sockets.pop().unwrap(),"manager_owned":true}))
+            Ok(value!({"compositor":proof,"wayland":sockets.pop().ok_or_else(|| enzimos_platform::Error("missing element".into()))?,"manager_owned":true}))
         })
         .await
         .map_err(|_| Error("desktop-session-observation-unavailable".into()))??;

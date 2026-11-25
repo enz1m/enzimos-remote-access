@@ -126,16 +126,15 @@ pub fn decode_reply(member: &str, body: &[u8]) -> Result<Value> {
     Ok(value)
 }
 fn public_bus_error(error: zbus::Error) -> Error {
-    if let zbus::Error::MethodError(name, Some(message), _) = error {
-        if name.as_str() == "org.enzimos.Remote1.Refused"
-            && (1..=96).contains(&message.len())
-            && message.as_bytes()[0].is_ascii_lowercase()
-            && message
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
-            return Error(message);
-        }
+    if let zbus::Error::MethodError(name, Some(message), _) = error
+        && name.as_str() == "org.enzimos.Remote1.Refused"
+        && (1..=96).contains(&message.len())
+        && message.as_bytes()[0].is_ascii_lowercase()
+        && message
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Error(message);
     }
     Error("operation-unavailable-or-outcome-unknown".into())
 }
@@ -143,7 +142,9 @@ fn public_bus_error(error: zbus::Error) -> Error {
 pub async fn execute(command: Command) -> Result<Value> {
     if command.name != "capabilities" {
         require(
+            // SAFETY: getuid has no preconditions and cannot fail.
             (1000..u32::MAX).contains(&unsafe { libc::getuid() })
+                // SAFETY: geteuid and getuid have no preconditions and cannot fail.
                 && unsafe { libc::getuid() } == unsafe { libc::geteuid() },
             "ordinary-account-required",
         )?;

@@ -189,7 +189,7 @@ impl Watch {
         for (rule, kind) in rules {
             let mut stream =
                 bounded(MessageStream::for_match_rule(rule, connection, Some(32)), 2).await?;
-            let state = watch.state.clone();
+            let state = std::sync::Arc::clone(&watch.state);
             watch.tasks.push(tokio::spawn(async move {
                 while let Some(message) = stream.next().await {
                     if state.closed.load(Ordering::Acquire) {

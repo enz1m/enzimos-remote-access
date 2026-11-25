@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+//! Tests of the reviewed network identity and its approval sidecar.
 use enzimos_platform::{files, json};
 use enzimos_remote_access::{
     network,
@@ -11,7 +12,7 @@ const HOME: &str = "5f0c8b1e-2d3a-4c5b-9e6f-7a8b9c0d1e2f";
 
 fn approved_network() -> Value {
     json!([network::identity(
-        "192.168.10.5".parse().unwrap(),
+        "192.168.10.5".parse().expect("test fixture"),
         "wlan0",
         Some("home"),
         Some(HOME)
@@ -24,12 +25,13 @@ fn configuration() -> Value {
 fn write_record(directory: &Path, record: &Value) {
     files::atomic(
         &directory.join("approval.json"),
-        &json::canonical(record).unwrap(),
+        &json::canonical(record).expect("test fixture"),
         0o600,
+        // SAFETY: geteuid has no preconditions and cannot fail.
         Some(unsafe { libc::geteuid() }),
         true,
     )
-    .unwrap();
+    .expect("test fixture");
 }
 
 #[test]
@@ -111,21 +113,23 @@ fn states() -> (tempfile::TempDir, std::path::PathBuf, State, State) {
         .prefix("rust-ssh-state-fixture-")
         .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in(work)
-        .unwrap();
+        .expect("test fixture");
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let owner = unsafe { libc::geteuid() };
     let directory = temp.path().join("ssh");
-    let approving = State::new(&directory, owner, "approval-boot".into()).unwrap();
-    let later = State::new(&directory, owner, "later-boot".into()).unwrap();
+    let approving = State::new(&directory, owner, "approval-boot".into()).expect("test fixture");
+    let later = State::new(&directory, owner, "later-boot".into()).expect("test fixture");
     (temp, directory, approving, later)
 }
 fn on_disk(directory: &Path) -> Value {
-    serde_json::from_slice(&std::fs::read(directory.join("approval.json")).unwrap()).unwrap()
+    serde_json::from_slice(&std::fs::read(directory.join("approval.json")).expect("test fixture"))
+        .expect("test fixture")
 }
 // The exact check of the released ssh-entry, which refuses any other field set.
 fn previous_release_reads(record: &Value) -> bool {
     let mut names = record
         .as_object()
-        .unwrap()
+        .expect("test fixture")
         .keys()
         .map(String::as_str)
         .collect::<Vec<_>>();

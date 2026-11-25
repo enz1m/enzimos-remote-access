@@ -13,6 +13,7 @@ pub fn reserve(address: SocketAddr) -> Result<TcpListener> {
     } else {
         libc::AF_INET
     };
+    // SAFETY: socket takes no pointers.
     let raw = unsafe {
         libc::socket(
             family,
@@ -23,10 +24,12 @@ pub fn reserve(address: SocketAddr) -> Result<TcpListener> {
     if raw < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
+    // SAFETY: `raw` was just returned by socket and is owned by nothing else.
     let fd = unsafe { OwnedFd::from_raw_fd(raw) };
     if address.is_ipv6() {
         let one: libc::c_int = 1;
         require(
+            // SAFETY: The option value points at `one` with its exact size, and `fd` is open.
             unsafe {
                 libc::setsockopt(
                     fd.as_raw_fd(),
@@ -49,6 +52,7 @@ pub fn reserve(address: SocketAddr) -> Result<TcpListener> {
                 },
                 sin_zero: [0; 8],
             };
+            // SAFETY: `address` is a complete sockaddr_in passed with its size, and `fd` is open.
             unsafe {
                 libc::bind(
                     fd.as_raw_fd(),
@@ -71,6 +75,7 @@ pub fn reserve(address: SocketAddr) -> Result<TcpListener> {
                 },
                 sin6_scope_id: 0,
             };
+            // SAFETY: `address` is a complete sockaddr_in6 passed with its size, and `fd` is open.
             unsafe {
                 libc::bind(
                     fd.as_raw_fd(),
@@ -81,6 +86,7 @@ pub fn reserve(address: SocketAddr) -> Result<TcpListener> {
         }
     };
     require(
+        // SAFETY: listen takes no pointers and `fd` keeps the descriptor open.
         rc == 0 && unsafe { libc::listen(fd.as_raw_fd(), 16) } == 0,
         "desktop-listener-reservation-refused",
     )?;
@@ -91,6 +97,7 @@ fn option(fd: i32, level: i32, name: i32) -> Result<i32> {
     let mut value = 0i32;
     let mut len = std::mem::size_of_val(&value) as libc::socklen_t;
     require(
+        // SAFETY: The option buffer is `value` with its size in `len`.
         unsafe { libc::getsockopt(fd, level, name, (&mut value as *mut i32).cast(), &mut len) }
             == 0
             && len as usize == std::mem::size_of_val(&value),
@@ -109,15 +116,21 @@ pub fn receive(expected: SocketAddr) -> Result<TcpListener> {
             && std::env::var("LISTEN_FDNAMES").ok().as_deref() == Some("desktop-listener"),
         "desktop-reserved-listener-required",
     )?;
+    // SAFETY: F_GETFD takes no pointers; it only checks that descriptor 3 is open.
     let flags = unsafe { libc::fcntl(3, libc::F_GETFD) };
     require(flags >= 0, "desktop-listener-descriptor-invalid")?;
+    // SAFETY: Systemd passed descriptor 3 to this process alone, as checked above, and it is
+    // adopted once.
     let fd = unsafe { OwnedFd::from_raw_fd(3) };
     require(
+        // SAFETY: F_SETFD takes no pointers and `fd` owns the descriptor.
         unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC) } == 0,
         "desktop-listener-descriptor-invalid",
     )?;
+    // SAFETY: `libc::stat` is a plain C struct, for which all-zero bytes are a valid value.
     let mut info: libc::stat = unsafe { std::mem::zeroed() };
     require(
+        // SAFETY: `info` is a writable `libc::stat` and `fd` keeps the descriptor open.
         unsafe { libc::fstat(fd.as_raw_fd(), &mut info) } == 0
             && info.st_mode & libc::S_IFMT == libc::S_IFSOCK
             && info.st_uid == 0,

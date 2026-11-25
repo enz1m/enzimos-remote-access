@@ -74,7 +74,9 @@ fn run_only_grants_refuse_foreign_stale_and_loose_proofs() {
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 fn private_tls_identity_persists_and_refuses_tampering() {
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if uid < 1000 || uid != unsafe { libc::geteuid() } {
         return;
     }
@@ -134,7 +136,9 @@ fn private_tls_identity_persists_and_refuses_tampering() {
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 fn partial_and_linked_identity_never_regenerates() {
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if uid < 1000 || uid != unsafe { libc::geteuid() } {
         return;
     }
@@ -319,7 +323,9 @@ fn native_unit_requires_paired_worker_and_listener_lifetime_properties() {
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 fn user_owned_system_credential_requires_read_only_mount_and_single_link() {
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if uid < 1000 || uid != unsafe { libc::geteuid() } {
         return;
     }
@@ -428,7 +434,9 @@ fn rdp_grants_require_the_reviewed_provider_identity_and_legacy_grants_refuse_it
 #[test]
 #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid, getuid).")]
 fn an_identity_left_incomplete_by_an_interrupted_first_run_is_replaced() {
+    // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if uid < 1000 || uid != unsafe { libc::geteuid() } {
         return;
     }

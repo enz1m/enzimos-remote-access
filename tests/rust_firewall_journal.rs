@@ -4,11 +4,7 @@ use enzimos_remote_access::{
     firewall::{Interface, Rule},
     firewall_journal::Journal,
 };
-use std::{
-    collections::BTreeSet,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, os::unix::fs::PermissionsExt, path::PathBuf};
 struct Firewall {
     rows: BTreeSet<String>,
     path: PathBuf,
@@ -20,14 +16,14 @@ impl Interface for Firewall {
         Ok(self.rows.contains(&r.rule))
     }
     fn add(&mut self, r: &Rule) -> Result<String> {
-        let receipt: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&self.path).unwrap()).unwrap();
+        let receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(&self.path)?)?;
         assert!(
             receipt["owned"]
                 .as_array()
-                .unwrap()
+                .expect("test fixture")
                 .iter()
-                .any(|v| v["rule"] == r.rule)
+                .any(|v| v["rule"] == r.rule),
+            "rule recorded before it is added"
         );
         self.rows.insert(r.rule.clone());
         if self.add_loses_reply {
@@ -58,6 +54,7 @@ fn persistent_firewall_ownership_precedes_calls_and_retains_uncertain_cleanup() 
         .tempdir_in(work)
         .unwrap();
     let path = temp.path().join("firewall.json");
+    // SAFETY: geteuid has no preconditions and cannot fail.
     let owner = unsafe { libc::geteuid() };
     let boot = "00000000-0000-0000-0000-000000000001";
     let borrowed = Rule {
