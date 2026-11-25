@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Root reserves before granting the firewall; release revokes before freeing it.
 use crate::{
-    compositor_grant, desktop_grant,
+    compositor_grant,
+    desktop_events::Watch,
+    desktop_grant,
+    desktop_provider::{Desktop, Resumed},
     desktop_session::Session,
     desktop_store::Store,
     firewall::{self, Rule},
@@ -13,26 +16,30 @@ use crate::{
 };
 use enzimos_platform::{Error, Result, files, require};
 use serde_json::Value;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use zbus::Connection;
 /// Runs one fixed Root operation of `enzimos-desktop-sharing@UID.service`.
 ///
 /// `prepare` and `release` run inside the sharing unit; `watch` runs in its
 /// firewall guard unit and keeps the lease across firewalld reloads, stops and
-/// restarts. Without a running firewalld, sharing runs unfiltered.
+/// restarts. Without a running firewalld, sharing runs unfiltered. `autostart`
+/// runs in `enzimos-desktop-sharing-autostart@UID.service` and starts
+/// unattended sharing whenever the account's session and reviewed network allow it.
 ///
 /// # Errors
 /// Fails for an unknown operation or account, without initial-namespace root,
 /// or when the grant, session, network or firewall lease do not match.
 pub async fn entry(operation: &str, uid: u32, connection: Connection) -> Result<()> {
     require(
-        matches!(operation, "prepare" | "release" | "watch"),
+        matches!(operation, "prepare" | "release" | "watch" | "autostart"),
         "desktop-unit-operation-invalid",
     )?;
     desktop_grant::account(uid)?;
     ssh_provider::root_context()?;
-    if operation == "watch" {
-        return watch(uid, connection).await;
+    match operation {
+        "watch" => return watch(uid, connection).await,
+        "autostart" => return autostart(uid, connection).await,
+        _ => {}
     }
     let operation = operation.to_owned();
     let runtime = tokio::runtime::Handle::current();
@@ -80,7 +87,7 @@ fn execute(
         &boot,
         &addresses.keys().copied().collect(),
     )?;
-    let session = runtime.block_on(Session::new(connection))?;
+    let session = runtime.block_on(Session::new(connection.clone()))?;
     runtime.block_on(session.verify(&grant["session"]))?;
     let configuration = &grant["configuration"];
     let provider_identity = if crate::desktop_rdp::selected(configuration) {
@@ -103,6 +110,12 @@ fn execute(
         None
     };
     desktop_grant::approved_zone(&grant, zone.as_deref())?;
+    desktop_grant::approved_connection(
+        &grant,
+        runtime
+            .block_on(network::connection(&connection, &interface))?
+            .as_deref(),
+    )?;
     compositor_grant::revoke(uid)?;
     if firewall_running {
         journal.release()?;
@@ -204,6 +217,69 @@ fn renew(guarded: &Guarded) -> Result<Restored> {
             listener.active == "active" && listener.main_pid == guarded.main_pid,
             "desktop-listener-not-active",
         )?;
-        runtime.block_on(desktop_grant::verify_network(&guarded.grant, &observer))
+        runtime.block_on(desktop_grant::verify_network(
+            &guarded.grant,
+            &guarded.connection,
+            &observer,
+        ))
     })
+}
+
+/// Longest pause after failed start attempts.
+const RETRY_LIMIT: Duration = Duration::from_secs(600);
+/// How often a watcher looks for the compositor of a session that has signed in.
+const COMPOSITOR_RECHECK: Duration = Duration::from_secs(2);
+
+// Exits once unattended sharing is off; the remote service disables this unit then.
+async fn autostart(uid: u32, connection: Connection) -> Result<()> {
+    let mut failures = 0u32;
+    let mut previous = None;
+    loop {
+        // Subscribing before each attempt leaves no unobserved change.
+        let events = Watch::sessions(&connection).await;
+        // A fresh provider binds the current logind, systemd and firewalld owners.
+        let result = match Desktop::new(connection.clone()).await {
+            Ok(mut desktop) => tokio::task::spawn_blocking(move || desktop.resume(uid))
+                .await
+                .map_err(|_| Error("desktop-unattended-unavailable".into()))?,
+            Err(error) => Err(error),
+        };
+        let report = match &result {
+            Ok(resumed) => format!("{resumed:?}"),
+            Err(error) => format!("failed: {error}"),
+        };
+        if previous.as_ref() != Some(&report) {
+            eprintln!("unattended desktop sharing: {report}");
+            previous = Some(report);
+        }
+        let mut recheck = firewall_lease::RECHECK;
+        match result {
+            Ok(Resumed::Off) => return Ok(()),
+            Ok(Resumed::Running | Resumed::Started) => failures = 0,
+            // A signed-in session's compositor and socket appear without a bus signal.
+            Ok(Resumed::Waiting(reason)) if reason.starts_with("desktop-owned-") => {
+                recheck = COMPOSITOR_RECHECK;
+            }
+            Ok(Resumed::Waiting(_)) => {}
+            Err(_) => {
+                // A start that fails keeps failing on the same session; back off.
+                failures = failures.saturating_add(1);
+                let pause = firewall_lease::RECHECK
+                    .saturating_mul(1 << failures.min(6))
+                    .min(RETRY_LIMIT);
+                tokio::time::sleep(pause).await;
+                continue;
+            }
+        }
+        let waited = match events {
+            Ok(mut events) => tokio::time::timeout(recheck, events.changed())
+                .await
+                .unwrap_or(Ok(())),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = waited {
+            eprintln!("unattended desktop sharing events unavailable: {error}");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
 }

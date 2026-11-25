@@ -16,6 +16,7 @@ pub mod desktop_rdp;
 pub mod desktop_rdp_observer;
 pub mod desktop_session;
 pub mod desktop_store;
+pub mod desktop_unattended;
 pub mod desktop_unit;
 pub mod desktop_unit_trust;
 pub mod desktop_viewers;

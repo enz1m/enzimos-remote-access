@@ -176,6 +176,42 @@ impl Session {
             id,
         )
     }
+    /// Returns the account's current display session, if it is signed in.
+    ///
+    /// # Errors
+    /// Fails when logind's owner changes or its reply is malformed.
+    pub async fn display(&self, uid: u32) -> Result<Option<String>> {
+        desktop_grant::account(uid)?;
+        let path: OwnedObjectPath = match self
+            .login
+            .call(
+                "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager",
+                "GetUser",
+                &(uid,),
+            )
+            .await
+        {
+            Ok(path) => path,
+            Err(_) => {
+                self.recheck_owners().await?;
+                return Ok(None);
+            }
+        };
+        require(
+            path.as_str().starts_with("/org/freedesktop/login1/user/")
+                && path.as_str().len() <= 512,
+            "desktop-user-manager-unavailable",
+        )?;
+        let user =
+            Self::properties(&self.login, path.as_str(), "org.freedesktop.login1.User").await?;
+        let display: (String, OwnedObjectPath) = field(&user, "Display")?;
+        require(
+            field::<u32>(&user, "UID")? == uid && (display.0.is_empty() || identifier(&display.0)),
+            "desktop-session-proof-invalid",
+        )?;
+        Ok((!display.0.is_empty()).then_some(display.0))
+    }
     #[allow(unsafe_code, reason = "Linux syscall ABI (geteuid).")]
     pub async fn manager_pid(&self, uid: u32, id: &str) -> Result<u32> {
         require(

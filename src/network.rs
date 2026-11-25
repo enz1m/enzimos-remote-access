@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use crate::bus_adapter::Pinned;
+use crate::{bus_adapter::Pinned, firewall_bus::Firewall};
 use enzimos_platform::{Error, Result, json, process, require};
 use serde_json::{Value, json as value};
 use std::{collections::BTreeMap, net::IpAddr, time::Duration};
@@ -201,4 +201,36 @@ pub fn require_identity(approved: &Value, observed: &Value) -> Result<()> {
         _ => false,
     };
     require(same, "ssh-approved-network-changed")
+}
+/// Observes the network each of `addresses` is on now, in the reviewed identity format.
+///
+/// Without a running firewalld (`None`) the rows carry no zone.
+///
+/// # Errors
+/// Fails with `listen-address-unavailable` when an address is not assigned, or
+/// when firewalld or NetworkManager cannot be read.
+pub async fn observe(
+    bus: &Connection,
+    firewall: Option<&Firewall>,
+    interfaces: &BTreeMap<IpAddr, String>,
+    addresses: &[IpAddr],
+) -> Result<Value> {
+    let mut rows = Vec::new();
+    for address in addresses {
+        let interface = interfaces
+            .get(address)
+            .ok_or_else(|| Error("listen-address-unavailable".into()))?;
+        let zone = match firewall {
+            Some(firewall) => Some(firewall.zone_for(interface).await?),
+            None => None,
+        };
+        let connection = connection(bus, interface).await?;
+        rows.push(identity(
+            *address,
+            interface,
+            zone.as_deref(),
+            connection.as_deref(),
+        ));
+    }
+    Ok(Value::Array(rows))
 }

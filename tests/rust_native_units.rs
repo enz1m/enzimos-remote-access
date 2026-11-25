@@ -5,6 +5,8 @@ const DESKTOP: &str = include_str!("../packaging/enzimos-desktop-sharing@.servic
 const SSH: &str = include_str!("../packaging/enzimos-sshd.service");
 const SSH_GUARD: &str = include_str!("../packaging/enzimos-sshd-firewall.service");
 const DESKTOP_GUARD: &str = include_str!("../packaging/enzimos-desktop-sharing-firewall@.service");
+const DESKTOP_AUTOSTART: &str =
+    include_str!("../packaging/enzimos-desktop-sharing-autostart@.service");
 fn fields(body: &str, key: &str) -> Vec<String> {
     body.lines()
         .filter_map(|line| line.strip_prefix(&format!("{key}=")))
@@ -105,6 +107,7 @@ fn all_unit_commands_resolve_to_packaged_binaries() {
         SSH,
         SSH_GUARD,
         DESKTOP_GUARD,
+        DESKTOP_AUTOSTART,
         include_str!("../packaging/enzimos-sshd-retry.service"),
         include_str!("../packaging/enzimos-remote-access.service"),
         include_str!("../packaging/org.enzimos.Remote1.service"),
@@ -135,5 +138,28 @@ fn all_unit_commands_resolve_to_packaged_binaries() {
             .matches("<allow_active>auth_admin</allow_active>")
             .count(),
         2
+    );
+}
+#[test]
+fn unattended_sharing_watcher_is_root_off_by_default_and_independent_of_the_listener() {
+    assert_eq!(
+        fields(DESKTOP_AUTOSTART, "ExecStart"),
+        ["/usr/lib/enzimos-remote/desktop-entry autostart %i"]
+    );
+    assert!(fields(DESKTOP_AUTOSTART, "User").is_empty());
+    assert_eq!(fields(DESKTOP_AUTOSTART, "WantedBy"), ["multi-user.target"]);
+    assert_eq!(fields(DESKTOP_AUTOSTART, "Restart"), ["on-failure"]);
+    // A watcher bound to the listener would stop with it and never start it again.
+    for key in ["BindsTo", "PartOf", "Requisite"] {
+        assert!(fields(DESKTOP_AUTOSTART, key).is_empty(), "{key}=");
+    }
+    assert!(
+        include_str!("../packaging/20-enzimos-remote.preset")
+            .lines()
+            .any(|line| line == "disable enzimos-desktop-sharing-autostart@.service")
+    );
+    assert!(
+        desktop_unit_trust::AUTOSTART_TEMPLATE
+            .ends_with("/enzimos-desktop-sharing-autostart@.service")
     );
 }

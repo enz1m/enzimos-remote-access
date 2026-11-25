@@ -8,6 +8,9 @@ use enzimos_platform::{Error, Result, require};
 use std::path::Path;
 use zbus::zvariant::OwnedValue;
 pub const TEMPLATE: &str = "/usr/lib/systemd/system/enzimos-desktop-sharing@.service";
+/// The per-account watcher that starts unattended sharing after sign-in.
+pub const AUTOSTART_TEMPLATE: &str =
+    "/usr/lib/systemd/system/enzimos-desktop-sharing-autostart@.service";
 pub const WORKER: &str = "/usr/lib/enzimos-remote/desktop-worker";
 const NATIVE_TEMPLATE: &[u8] = include_bytes!("../packaging/enzimos-desktop-sharing@.service");
 pub fn native_template(bytes: &[u8]) -> bool {

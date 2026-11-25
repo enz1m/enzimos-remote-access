@@ -29,6 +29,8 @@ fn service_wire_rejects_wrong_path_signature_sender_and_no_reply_before_dispatch
         ("ApplyDesktop", true),
         ("ReviewStopDesktop", true),
         ("StopDesktop", true),
+        ("ReviewDesktopUnattended", true),
+        ("SetDesktopUnattended", true),
     ] {
         let parsed = service::validate(&call(member, body)).unwrap();
         assert_eq!(parsed.member, member);
@@ -144,9 +146,20 @@ fn local_client_preserves_review_envelope_and_validates_the_returned_digest() {
         vec!["apply"],
         vec!["apply", "a", "b"],
         vec!["disconnect", "--allow-interaction", "--allow-interaction"],
+        vec!["set-unattended-desktop"],
+        vec!["set-unattended-desktop", "yes"],
+        vec!["review-unattended-desktop", "on", "--allow-interaction"],
+        vec!["set-unattended-desktop", "on", "file.json"],
     ] {
         assert!(client::parse(&args.into_iter().map(String::from).collect::<Vec<_>>()).is_err());
     }
+    let args = ["set-unattended-desktop", "off", "--allow-interaction"].map(String::from);
+    let command = client::parse(&args).unwrap();
+    assert_eq!(
+        (command.unattended, command.interaction),
+        (Some(false), true)
+    );
+    assert!(command.configuration.is_none());
     let help = std::process::Command::new(env!("CARGO_BIN_EXE_enzimos-remote"))
         .arg("--help")
         .env_clear()

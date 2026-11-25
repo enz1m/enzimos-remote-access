@@ -7,7 +7,11 @@ use enzimos_platform::{Error, Result, require};
 fn execute() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     require(
-        args.len() == 2 && matches!(args[0].as_str(), "prepare" | "release" | "watch"),
+        args.len() == 2
+            && matches!(
+                args[0].as_str(),
+                "prepare" | "release" | "watch" | "autostart"
+            ),
         "desktop-unit-operation-invalid",
     )?;
     let uid = args[1]

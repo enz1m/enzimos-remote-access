@@ -73,7 +73,7 @@ async fn check_session(
 }
 async fn check_network(bus: &zbus::Connection, grant: &Value) -> Result<()> {
     let firewall = Firewall::new(bus.clone()).await?;
-    desktop_grant::verify_network(grant, &firewall).await
+    desktop_grant::verify_network(grant, bus, &firewall).await
 }
 // A firewalld reload or restart and a NetworkManager reconnect briefly report
 // another zone or no answer; only a lasting network change ends sharing.

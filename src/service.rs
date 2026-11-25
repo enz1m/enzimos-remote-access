@@ -2,7 +2,9 @@
 //! Exact existing wire methods; malformed/no-reply calls never reach providers.
 use crate::slots::Slots;
 use crate::{
-    desktop_binding, desktop_dispatch, desktop_provider::Desktop, desktop_unit_trust, dispatch,
+    desktop_binding, desktop_dispatch,
+    desktop_provider::{Desktop, Operation},
+    desktop_unit_trust, dispatch,
     ssh_provider::Ssh,
 };
 use enzimos_platform::{Error, Result, json, require};
@@ -24,7 +26,7 @@ use zbus::{
 };
 pub const NAME: &str = "org.enzimos.Remote1";
 pub const PATH: &str = "/org/enzimos/Remote1";
-const METHODS: [(&str, bool); 11] = [
+const METHODS: [(&str, bool); 13] = [
     ("GetCapabilities", false),
     ("Query", false),
     ("Review", true),
@@ -36,6 +38,8 @@ const METHODS: [(&str, bool); 11] = [
     ("ApplyDesktop", true),
     ("ReviewStopDesktop", true),
     ("StopDesktop", true),
+    ("ReviewDesktopUnattended", true),
+    ("SetDesktopUnattended", true),
 ];
 pub struct Call {
     pub member: &'static str,
@@ -151,10 +155,36 @@ impl Handler for Api {
                 observers.insert(call.sender, result.clone());
                 Ok(result)
             }
-            "ReviewDesktop" => self.desktop.review(body, &call.sender, false).await,
-            "ApplyDesktop" => self.desktop.mutate(body, &call.sender, false).await,
-            "ReviewStopDesktop" => self.desktop.review(body, &call.sender, true).await,
-            "StopDesktop" => self.desktop.mutate(body, &call.sender, true).await,
+            "ReviewDesktop" => {
+                self.desktop
+                    .review(body, &call.sender, Operation::Apply)
+                    .await
+            }
+            "ApplyDesktop" => {
+                self.desktop
+                    .mutate(body, &call.sender, Operation::Apply)
+                    .await
+            }
+            "ReviewStopDesktop" => {
+                self.desktop
+                    .review(body, &call.sender, Operation::Stop)
+                    .await
+            }
+            "StopDesktop" => {
+                self.desktop
+                    .mutate(body, &call.sender, Operation::Stop)
+                    .await
+            }
+            "ReviewDesktopUnattended" => {
+                self.desktop
+                    .review(body, &call.sender, Operation::Unattended)
+                    .await
+            }
+            "SetDesktopUnattended" => {
+                self.desktop
+                    .mutate(body, &call.sender, Operation::Unattended)
+                    .await
+            }
             _ => Err(Error("wire-method-or-signature-unavailable".into())),
         }
     }
@@ -219,7 +249,9 @@ pub fn capabilities() -> Value {
             .is_ok_and(|m| *p == desktop_unit_trust::TEMPLATE || m.mode() & 0o111 != 0)
     });
     let available = available && desktop_unit_trust::installed_template_matches().unwrap_or(false);
-    value!({"schema":1,"ssh":true,"sftp":true,"key_only":false,"ssh_password_authentication":true,"ssh_multiple_addresses":true,"desktop_sharing":available,"desktop_sharing_backend":true,"desktop_viewers":true,"desktop_changed_signal":true,"remote_login":false,"rdp":false,"default_enabled":false})
+    let unattended = available
+        && desktop_binding::installed(Path::new(desktop_unit_trust::AUTOSTART_TEMPLATE)).is_ok();
+    value!({"schema":1,"ssh":true,"sftp":true,"key_only":false,"ssh_password_authentication":true,"ssh_multiple_addresses":true,"desktop_sharing":available,"desktop_sharing_backend":true,"desktop_viewers":true,"desktop_changed_signal":true,"desktop_unattended":unattended,"remote_login":false,"rdp":false,"default_enabled":false})
 }
 fn public(error: Error) -> String {
     let s = error.0;

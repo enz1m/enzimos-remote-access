@@ -32,8 +32,9 @@ service, compositor and provider versions before deployment.
 
 Choose a currently assigned, explicit address and matching client networks; there
 is no wildcard exposure. `max_fps` is bounded and `output` optionally names a
-current output. The example address is documentation, not a default. There is no
-session-sharing autostart: locking, leaving or closing the session ends sharing.
+current output. The example address is documentation, not a default. Locking,
+leaving or closing the session ends sharing. [Unattended sharing](#unattended-sharing)
+starts it again on its own.
 
 The response contains `plan` and `plan_sha256`. Show its security and stop
 consequences before calling `ApplyDesktop` with the same configuration,
@@ -71,6 +72,63 @@ its normal idle exit, so visible consumers should refresh periodically (for exam
 every ten seconds). Signals carry no account, address or credential data. Viewer
 changes are deliberately excluded from reviewed mutation digests.
 
+## Unattended sharing
+
+Unattended sharing starts the approved desktop sharing again whenever its owner
+is signed in on this computer, without a new approval. Turn it on while sharing
+runs: `ReviewDesktopUnattended` accepts `{schema: 1, unattended: true}` and
+`SetDesktopUnattended` takes the same field with the plan digest and approval
+fields of `ApplyDesktop`. It needs administrator approval, the encrypted VNC
+provider, a running firewalld and a listen address on a NetworkManager
+connection. `{unattended: false}` turns it off without stopping current
+sharing; the next time sharing ends, it stays off. `StopDesktop` also turns it
+off, and its plan says so in `unattended_turned_off`.
+
+While it is on, `enzimos-desktop-sharing-autostart@UID.service` runs as root.
+On every logind, firewalld or NetworkManager change, and at least every 15
+seconds, it starts sharing when all of these hold:
+
+- the owner's display session is local, Wayland, active and unlocked;
+- the listen address is on the reviewed interface and NetworkManager
+  connection, in the reviewed zone while firewalld runs;
+- no other desktop operation or firewall cleanup is pending.
+
+The grant binds that session and compositor exactly as an interactive approval
+does. The configuration, sharing password, certificate, view-only setting and
+firewall lease are unchanged, so the Shell shows its sharing indicator and
+viewers need the password. Sharing still ends on lock, sign-out and a network
+change, and starts again after unlock, sign-in or the network's return. Failed
+starts are retried with a growing pause of up to ten minutes.
+
+Sharing needs the owner's compositor, so it never starts before sign-in. With
+automatic sign-in it starts at boot; a locked screen still ends it until
+someone unlocks.
+
+`ApplyDesktop` keeps unattended sharing on for the new configuration and
+records its network. It is refused if that network has no NetworkManager
+connection. `QueryDesktop` reports `autostart` and `unattended`, which holds the
+recorded configuration and interface or `null`.
+
+### Unattended state
+
+Root keeps one file per account, `/var/lib/enzimos/remote/desktop/UID/unattended.json`,
+mode 0600. Schema 1 has exactly `schema uid configuration network`:
+`configuration` is the reviewed VNC configuration and `network` is one row of the
+[SSH network identity](SSH_APPROVAL_STATE.md) format, with a zone and a
+connection UUID. The file is written only when an administrator approves.
+
+- Releases without unattended sharing never read the file, and its watcher unit
+  is not installed. Sharing behaves as before: a downgrade turns unattended
+  sharing off and nothing is refused. The file stays, so an upgrade turns it on
+  again. Turn it off before downgrading if a later upgrade should not.
+- A file that is not JSON or has another schema is treated as off and left in
+  place. A schema-1 file with invalid fields is refused.
+- Grants in `/run` may carry `connection`, the reviewed NetworkManager
+  connection, which sharing then requires. Grants without it are accepted.
+  Grants last only until reboot, so a release that does not know the field sees
+  it only after a downgrade without a reboot. That release then refuses to start
+  sharing from it until it is approved again.
+
 ## Credentials and transport
 
 WayVNC offers encrypted VeNCrypt X509Plain only. No unauthenticated, legacy DES
@@ -88,7 +146,8 @@ run-only systemd credential; capture remains unprivileged. Logind and the exact
 compositor/socket identity are checked before and during the session. A Root
 firewall guard unit, bound to the sharing unit, restores the scoped lease after a
 firewalld reload or restart. On every firewalld or NetworkManager change, and at
-least every 15 seconds, it checks the reviewed interface and zone. While they no
+least every 15 seconds, it checks the reviewed interface, zone and, when the grant
+records one, NetworkManager connection. While they no
 longer apply only the lease's reject rule stays, and after 20 seconds sharing
 ends. While firewalld is stopped, sharing continues unfiltered.
 

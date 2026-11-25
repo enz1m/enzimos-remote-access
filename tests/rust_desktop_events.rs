@@ -349,3 +349,71 @@ async fn a_firewall_guard_follows_networkmanager_devices_and_connections() {
     daemon.kill().await.unwrap();
     daemon.wait().await.unwrap();
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unattended_watcher_wakes_for_logind_sessions_from_logind_only() {
+    let (_temp, address, mut daemon) = private_bus().await;
+    let client = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let attacker = Builder::address(address.as_str())
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    assert!(Watch::sessions(&client).await.is_err());
+    let login = named(&address, "org.freedesktop.login1").await;
+    let mut watch = Watch::sessions(&client).await.unwrap();
+    changed(&attacker).await;
+    assert!(quiet(&mut watch).await);
+    changed(&login).await;
+    tokio::time::timeout(Duration::from_secs(2), watch.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    for (member, body) in [("SessionNew", "c2"), ("SessionRemoved", "c2")] {
+        login
+            .emit_signal(
+                None::<&str>,
+                "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager",
+                member,
+                &(
+                    body,
+                    OwnedObjectPath::try_from("/org/freedesktop/login1/session/c2").unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    login
+        .emit_signal(
+            None::<&str>,
+            "/org/freedesktop/login1/user/_1000",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            &(
+                "org.freedesktop.login1.User",
+                HashMap::<String, OwnedValue>::new(),
+                Vec::<String>::new(),
+            ),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), watch.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!watch.lost());
+    watch.retire();
+    drop(login);
+    drop(attacker);
+    drop(client);
+    daemon.kill().await.unwrap();
+    daemon.wait().await.unwrap();
+}

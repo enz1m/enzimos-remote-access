@@ -20,12 +20,19 @@ pub fn decode(body: &str, fields: &str) -> Result<Value> {
     Ok(v)
 }
 pub fn mutation_request(body: &str, apply: bool) -> Result<Value> {
+    reviewed_mutation(body, apply.then_some("configuration"))
+}
+/// Decodes a mutation carrying its reviewed digest, approval deadline and,
+/// when `field` names one, the reviewed request field.
+///
+/// # Errors
+/// Fails for missing, extra or malformed fields.
+pub fn reviewed_mutation(body: &str, field: Option<&str>) -> Result<Value> {
     let v = decode(
         body,
-        if apply {
-            "configuration plan_sha256 allow_interaction valid_for_ms"
-        } else {
-            "plan_sha256 allow_interaction valid_for_ms"
+        &match field {
+            Some(field) => format!("{field} plan_sha256 allow_interaction valid_for_ms"),
+            None => "plan_sha256 allow_interaction valid_for_ms".into(),
         },
     )?;
     require(

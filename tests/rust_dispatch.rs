@@ -22,3 +22,28 @@ fn reviewed_mutations_reject_duplicates_wrong_types_and_unbounded_deadlines() {
     assert!(dispatch::decode(&" ".repeat(65537), "").is_err());
     assert!(dispatch::decode("{\"schema\":1,\"configuration\":NaN}", "configuration").is_err());
 }
+#[test]
+fn unattended_mutations_carry_only_their_reviewed_toggle() {
+    let digest = "a".repeat(64);
+    let body = |extra: serde_json::Value| {
+        let mut v = serde_json::json!({"schema":1,"plan_sha256":digest,"allow_interaction":true,"valid_for_ms":60000});
+        for (key, value) in extra.as_object().unwrap() {
+            v[key] = value.clone();
+        }
+        v.to_string()
+    };
+    let decoded = dispatch::reviewed_mutation(
+        &body(serde_json::json!({"unattended":true})),
+        Some("unattended"),
+    )
+    .unwrap();
+    assert_eq!(decoded["unattended"], true);
+    for refused in [
+        body(serde_json::json!({})),
+        body(serde_json::json!({"unattended":true,"configuration":{}})),
+        body(serde_json::json!({"configuration":{}})),
+    ] {
+        assert!(dispatch::reviewed_mutation(&refused, Some("unattended")).is_err());
+    }
+    assert!(dispatch::reviewed_mutation(&body(serde_json::json!({})), None).is_ok());
+}

@@ -1,2 +1,3 @@
 disable enzimos-sshd.service
 disable enzimos-sshd-retry.timer
+disable enzimos-desktop-sharing-autostart@.service

@@ -124,6 +124,40 @@ impl Watch {
         }
         Ok(watch)
     }
+    /// Watches logind sessions, firewalld and NetworkManager, for starting a
+    /// listener once its account's session and reviewed network are ready.
+    ///
+    /// Reports a change when a session or user appears, disappears or changes
+    /// properties, and for every event [`Watch::lease`] reports.
+    ///
+    /// # Errors
+    /// Fails when logind or the bus cannot be observed.
+    pub async fn sessions(connection: &Connection) -> Result<Self> {
+        let login = Pinned::new(connection.clone(), "org.freedesktop.login1").await?;
+        let firewall = Pinned::if_running(connection.clone(), FIREWALLD).await?;
+        let network = Pinned::if_running(connection.clone(), NETWORK_MANAGER).await?;
+        let rules = firewall_rules(None, firewall.as_ref().map(Pinned::owner), true)
+            .and_then(|mut rules| {
+                rules.extend(login_rules(login.owner())?);
+                if let Some(network) = &network {
+                    rules.extend(network_rules(network.owner())?);
+                }
+                Ok(rules)
+            })
+            .map_err(|_| Error("desktop-watch-authority-invalid".into()))?;
+        let watch = Self::spawn(connection, rules).await?;
+        watch.settle_firewall(connection, firewall.as_ref()).await?;
+        if login.recheck().await.is_err()
+            || Pinned::if_running(connection.clone(), NETWORK_MANAGER)
+                .await?
+                .as_ref()
+                .map(Pinned::owner)
+                != network.as_ref().map(Pinned::owner)
+        {
+            watch.state.changed(&Event::Changed);
+        }
+        Ok(watch)
+    }
     // An owner change between the first read and the subscription has no event of its own.
     async fn settle_firewall(
         &self,
@@ -300,6 +334,32 @@ fn firewall_rules(
             build()
                 .sender(firewall)?
                 .path("/org/fedoraproject/FirewallD1")?
+                .build()
+                .to_owned(),
+            Kind::Changed,
+        ));
+    }
+    Ok(rules)
+}
+fn login_rules(owner: &str) -> zbus::Result<Vec<(MatchRule<'static>, Kind)>> {
+    let build = || MatchRule::builder().msg_type(Type::Signal).sender(owner);
+    let mut rules = vec![(
+        build()?
+            .path("/org/freedesktop/login1")?
+            .interface("org.freedesktop.login1.Manager")?
+            .build()
+            .to_owned(),
+        Kind::Changed,
+    )];
+    for interface in [
+        "org.freedesktop.login1.Session",
+        "org.freedesktop.login1.User",
+    ] {
+        rules.push((
+            build()?
+                .interface("org.freedesktop.DBus.Properties")?
+                .member("PropertiesChanged")?
+                .arg(0, interface)?
                 .build()
                 .to_owned(),
             Kind::Changed,

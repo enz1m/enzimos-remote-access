@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=enzimOS unattended desktop sharing for account %i
+After=dbus.service systemd-logind.service firewalld.service NetworkManager.service
+Requires=dbus.service
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/enzimos-remote/desktop-entry autostart %i
+# Exits successfully once unattended sharing is turned off.
+Restart=on-failure
+RestartSec=15s
+UMask=0077
+TimeoutStopSec=40s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

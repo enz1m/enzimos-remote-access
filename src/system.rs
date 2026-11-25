@@ -28,6 +28,7 @@ pub fn unit(value: &str) -> Result<()> {
     }
     let uid = value
         .strip_prefix("enzimos-desktop-sharing@")
+        .or_else(|| value.strip_prefix("enzimos-desktop-sharing-autostart@"))
         .and_then(|s| s.strip_suffix(".service"))
         .ok_or_else(|| Error("remote-system-unit-invalid".into()))?;
     let n = uid

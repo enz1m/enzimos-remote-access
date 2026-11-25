@@ -9,6 +9,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
+use zbus::Connection;
 
 pub fn account(uid: u32) -> Result<u32> {
     require((1000..u32::MAX).contains(&uid), "desktop-account-invalid")?;
@@ -82,14 +83,17 @@ pub fn validate(
     addresses: &BTreeSet<IpAddr>,
 ) -> Result<Value> {
     let rdp = crate::desktop_rdp::selected(&value["configuration"]);
-    json::fields(
-        value,
-        if rdp {
-            "schema boot_id uid nonce session configuration interface zone provider"
+    // `connection` is absent from grants written before connection review.
+    let fields = format!(
+        "schema boot_id uid nonce session configuration interface zone{}{}",
+        if value.get("connection").is_some() {
+            " connection"
         } else {
-            "schema boot_id uid nonce session configuration interface zone"
+            ""
         },
-    )?;
+        if rdp { " provider" } else { "" }
+    );
+    json::fields(value, &fields)?;
     if rdp {
         json::fields(&value["provider"], "name manifest_sha256")?;
         require(
@@ -116,7 +120,10 @@ pub fn validate(
         "desktop-grant-stale-or-foreign",
     )?;
     require(
-        text(&value["interface"], b"_.:-") && text(&value["zone"], b"_.:-"),
+        text(&value["interface"], b"_.:-")
+            && text(&value["zone"], b"_.:-")
+            && (value.get("connection").is_none_or(Value::is_null)
+                || text(&value["connection"], b"-")),
         "desktop-network-proof-invalid",
     )?;
     session(&value["session"], uid)?;
@@ -250,11 +257,27 @@ pub fn approved_zone(grant: &Value, zone: Option<&str>) -> Result<()> {
         "desktop-approved-network-changed",
     )
 }
-/// Confirms the grant's reviewed interface, and its zone while firewalld runs.
+/// Refuses a NetworkManager connection other than the reviewed one.
+///
+/// A grant without a reviewed connection accepts any; `observed` is `None`
+/// when NetworkManager does not run or does not manage the interface.
+///
+/// # Errors
+/// Fails with `desktop-approved-network-changed` for another or no connection.
+pub fn approved_connection(grant: &Value, observed: Option<&str>) -> Result<()> {
+    require(
+        grant
+            .get("connection")
+            .and_then(Value::as_str)
+            .is_none_or(|reviewed| observed == Some(reviewed)),
+        "desktop-approved-network-changed",
+    )
+}
+/// Confirms the grant's reviewed interface and connection, and its zone while firewalld runs.
 ///
 /// # Errors
 /// Fails when the network changed or cannot be observed.
-pub async fn verify_network(grant: &Value, firewall: &Firewall) -> Result<()> {
+pub async fn verify_network(grant: &Value, bus: &Connection, firewall: &Firewall) -> Result<()> {
     let interfaces = tokio::task::spawn_blocking(network::interfaces)
         .await
         .map_err(|_| Error("desktop-network-observation-unavailable".into()))??;
@@ -264,5 +287,9 @@ pub async fn verify_network(grant: &Value, firewall: &Firewall) -> Result<()> {
     } else {
         None
     };
-    approved_zone(grant, zone.as_deref())
+    approved_zone(grant, zone.as_deref())?;
+    approved_connection(
+        grant,
+        network::connection(bus, &interface).await?.as_deref(),
+    )
 }

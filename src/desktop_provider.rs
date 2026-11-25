@@ -3,6 +3,7 @@
 use crate::{
     config, desktop_binding, desktop_grant,
     desktop_session::Session,
+    desktop_unattended::{self, Store},
     desktop_unit, desktop_unit_trust,
     firewall_bus::Firewall,
     network, sockets, ssh_provider,
@@ -21,17 +22,61 @@ use std::{
     time::{Duration, Instant},
 };
 use zbus::Connection;
+/// A reviewed desktop sharing mutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operation {
+    /// Starts or reconfigures sharing.
+    Apply,
+    /// Stops sharing and turns unattended sharing off.
+    Stop,
+    /// Turns unattended sharing on or off.
+    Unattended,
+}
 pub trait Reviewed: Send + 'static {
     fn query(&mut self, peer: &Peer) -> Result<Value>;
     fn review(&mut self, peer: &Peer, configuration: &Value) -> Result<Value>;
     fn review_stop(&mut self, peer: &Peer) -> Result<Value>;
+    fn review_unattended(&mut self, peer: &Peer, enabled: bool) -> Result<Value>;
     fn change(
         &mut self,
         peer: &Peer,
         reviewed: &Value,
-        stopping: bool,
+        operation: Operation,
         before_commit: &mut dyn FnMut(&mut Self, bool) -> Result<()>,
     ) -> Result<Value>;
+}
+/// What one unattended start attempt found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Resumed {
+    /// Unattended sharing is off for the account.
+    Off,
+    /// The sharing unit is already running or changing state.
+    Running,
+    /// Sharing started on the reviewed network.
+    Started,
+    /// A condition for starting does not hold yet.
+    Waiting(String),
+}
+/// The watcher unit that starts unattended sharing for one account.
+///
+/// # Errors
+/// Fails for an account outside the ordinary range.
+pub fn autostart_unit(uid: u32) -> Result<String> {
+    Ok(format!(
+        "enzimos-desktop-sharing-autostart@{}.service",
+        desktop_grant::account(uid)?
+    ))
+}
+// Interactive changes wait for an unattended start attempt to finish.
+fn operation_lock(directory: &Path) -> Result<files::Lock> {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        if let Some(lock) = files::Lock::try_acquire(&directory.join("operation.lock"), 0)? {
+            return Ok(lock);
+        }
+        require(Instant::now() < deadline, "desktop-operation-in-progress")?;
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 pub struct Desktop {
     connection: Connection,
@@ -87,7 +132,7 @@ impl Desktop {
             "desktop-system-unit-untrusted",
         )?;
         Ok(
-            value!({"grant":self.current(uid)?,"state":p.active,"pid":p.main_pid,"invocation":invocation,"reserved_descriptors":p.fdstore}),
+            value!({"grant":self.current(uid)?,"state":p.active,"pid":p.main_pid,"invocation":invocation,"reserved_descriptors":p.fdstore,"unattended":Store::installed(uid)?.load()?}),
         )
     }
     fn listening(&self, uid: u32, grant: Option<&Value>) -> Result<bool> {
@@ -175,6 +220,138 @@ impl Desktop {
         self.runtime
             .block_on(desktop_unit::entry("release", uid, self.connection.clone()))
     }
+    fn autostart(&self, uid: u32) -> Result<System> {
+        self.runtime
+            .block_on(System::new(self.connection.clone(), &autostart_unit(uid)?))
+    }
+    // A failure between steps leaves at most a watcher without a record, which exits.
+    fn set_unattended(&self, uid: u32, record: Option<&Value>) -> Result<()> {
+        let store = Store::installed(uid)?;
+        let watcher = self.autostart(uid)?;
+        match record {
+            Some(record) => {
+                self.runtime.block_on(watcher.autostart(true))?;
+                store.write(record)?;
+                self.runtime.block_on(watcher.job("start"))
+            }
+            None => {
+                store.remove()?;
+                self.runtime.block_on(watcher.autostart(false))?;
+                self.runtime.block_on(watcher.job("stop"))
+            }
+        }
+    }
+    fn reviewed_network(&self, address: IpAddr) -> Result<Value> {
+        let addresses = network::interfaces()?;
+        require(
+            self.runtime.block_on(self.firewall.running())?,
+            "desktop-unattended-network-identity-unavailable",
+        )?;
+        let observed = self.runtime.block_on(network::observe(
+            &self.connection,
+            Some(&self.firewall),
+            &addresses,
+            &[address],
+        ))?;
+        require(
+            network::identifies_connections(&observed),
+            "desktop-unattended-network-identity-unavailable",
+        )?;
+        Ok(observed)
+    }
+    /// Starts unattended sharing for `uid` when its record, signed-in local
+    /// session and reviewed network all allow it.
+    ///
+    /// The grant binds the account's current display session, exactly as an
+    /// interactive approval would. Nothing starts while another desktop
+    /// operation runs, cleanup is pending, or a prior operation is unfinished.
+    ///
+    /// # Errors
+    /// Fails when state cannot be read or a started unit does not confirm its
+    /// encrypted listener; the attempt is then rolled back.
+    pub fn resume(&mut self, uid: u32) -> Result<Resumed> {
+        let store = Store::installed(uid)?;
+        let waiting = |reason: &str| Ok(Resumed::Waiting(reason.into()));
+        let idle = |p: &system::Snapshot| -> Option<Result<Resumed>> {
+            if !matches!(p.active.as_str(), "inactive" | "failed") {
+                return Some(Ok(Resumed::Running));
+            }
+            (p.fdstore > 0).then(|| waiting("desktop-listener-cleanup-required"))
+        };
+        if store.load()?.is_none() {
+            return Ok(Resumed::Off);
+        }
+        if let Some(result) = idle(&self.properties(uid)?) {
+            return result;
+        }
+        let directory = desktop_grant::folder(uid)?;
+        files::ensure_directory(&directory, 0o700, 0)?;
+        let Some(_lock) = files::Lock::try_acquire(&directory.join("operation.lock"), 0)? else {
+            return waiting("desktop-operation-in-progress");
+        };
+        if self.unfinished(uid)? {
+            return waiting("desktop-prior-operation-needs-reviewed-stop");
+        }
+        let Some(record) = store.load()? else {
+            return Ok(Resumed::Off);
+        };
+        if let Some(result) = idle(&self.properties(uid)?) {
+            return result;
+        }
+        let Some(id) = self.runtime.block_on(self.session.display(uid))? else {
+            return waiting("desktop-session-unavailable");
+        };
+        if self
+            .runtime
+            .block_on(self.session.values(uid, &id))
+            .is_err()
+        {
+            return waiting("desktop-local-unlocked-session-required");
+        }
+        desktop_binding::installed(Path::new("/usr/bin/wayvnc"))?;
+        let configuration = &record["configuration"];
+        let address: IpAddr = configuration["listen_address"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| Error("desktop-unattended-record-invalid".into()))?;
+        let addresses = network::interfaces()?;
+        if !addresses.contains_key(&address) {
+            return waiting("listen-address-unavailable");
+        }
+        let running = self.runtime.block_on(self.firewall.running())?;
+        let observed = self.runtime.block_on(network::observe(
+            &self.connection,
+            running.then_some(&self.firewall),
+            &addresses,
+            &[address],
+        ))?;
+        if network::require_identity(&record["network"], &observed).is_err() {
+            return waiting("desktop-approved-network-changed");
+        }
+        let checked = config::desktop(configuration, &addresses.keys().copied().collect())?;
+        let bound = match self.runtime.block_on(self.session.discover(uid, &id)) {
+            Ok(bound) => bound,
+            Err(error) => return waiting(&error.0),
+        };
+        let row = desktop_unattended::reviewed(&record);
+        let boot = ssh_provider::boot_id()?;
+        let grant = value!({"schema":1,"boot_id":boot,"uid":uid,"nonce":files::random_hex(32)?,"session":bound,"configuration":checked,"interface":row["interface"],"zone":row["zone"],"connection":row["connection"]});
+        let started: Result<()> = (|| {
+            desktop_grant::publish(&grant, uid, &boot, &addresses.keys().copied().collect())?;
+            require(
+                store.load()?.as_ref() == Some(&record),
+                "desktop-unattended-record-changed",
+            )?;
+            self.runtime.block_on(self.system(uid)?.job("start"))?;
+            self.ready(uid, &grant)
+        })();
+        if let Err(error) = started {
+            let _ = self.runtime.block_on(self.system(uid)?.job("stop"));
+            self.release(uid)?;
+            return Err(error);
+        }
+        Ok(Resumed::Started)
+    }
     fn receipt(
         &self,
         uid: u32,
@@ -246,6 +423,7 @@ impl Reviewed for Desktop {
     fn query(&mut self, peer: &Peer) -> Result<Value> {
         let uid = desktop_grant::account(peer.uid)?;
         let grant = self.current(uid)?;
+        let unattended = Store::installed(uid)?.load()?;
         let p = self.properties(uid)?;
         let viewers = if p.active == "inactive" && p.main_pid == 0 {
             value!({"status":"available","connected_count":0,"clients":[]})
@@ -266,7 +444,7 @@ impl Reviewed for Desktop {
             value!({"status":"unavailable","connected_count":null,"clients":null})
         };
         Ok(
-            value!({"schema":1,"configuration":grant.as_ref().map(|g| &g["configuration"]),"viewers":viewers,"listening":self.listening(uid, grant.as_ref())?,"state":p.active,"endpoint_reserved":p.fdstore>0,"cleanup_pending":p.fdstore>0 && matches!(p.active.as_str(), "inactive" | "failed"),"encrypted_only":true,"autostart":false,"remote_login":false,"ends_on_lock_logout_or_inactive":true,"credentials_owned_by_user":true}),
+            value!({"schema":1,"configuration":grant.as_ref().map(|g| &g["configuration"]),"viewers":viewers,"listening":self.listening(uid, grant.as_ref())?,"state":p.active,"endpoint_reserved":p.fdstore>0,"cleanup_pending":p.fdstore>0 && matches!(p.active.as_str(), "inactive" | "failed"),"encrypted_only":true,"autostart":unattended.is_some(),"unattended":unattended.as_ref().map(|r| value!({"configuration":r["configuration"],"interface":desktop_unattended::reviewed(r)["interface"]})),"remote_login":false,"ends_on_lock_logout_or_inactive":true,"credentials_owned_by_user":true}),
         )
     }
     fn review(&mut self, peer: &Peer, configuration: &Value) -> Result<Value> {
@@ -296,7 +474,20 @@ impl Reviewed for Desktop {
             .get(&ip)
             .ok_or_else(|| Error("desktop-listen-address-unavailable".into()))?;
         let zone = self.runtime.block_on(self.firewall.zone_for(interface))?;
-        let mut plan = value!({"schema":1,"uid":peer.uid,"configuration":checked,"session":bound,"interface":interface,"zone":zone,"previous_state_sha256":json::fingerprint(&self.snapshot(peer.uid)?)?,"encrypted_only":true,"autostart":false,"ends_on_lock_logout_or_inactive":true,"existing_desktop_clients_disconnected":true,"ssh_connections_changed":false});
+        let connection = self
+            .runtime
+            .block_on(network::connection(&self.connection, interface))?;
+        // Unattended sharing follows a changed configuration only onto an identifiable network.
+        let unattended = Store::installed(peer.uid)?.load()?.is_some();
+        require(
+            !unattended || provider.is_none(),
+            "desktop-unattended-provider-unavailable",
+        )?;
+        require(
+            !unattended || connection.is_some(),
+            "desktop-unattended-network-identity-unavailable",
+        )?;
+        let mut plan = value!({"schema":1,"uid":peer.uid,"configuration":checked,"session":bound,"interface":interface,"zone":zone,"connection":connection,"previous_state_sha256":json::fingerprint(&self.snapshot(peer.uid)?)?,"encrypted_only":true,"autostart":unattended,"ends_on_lock_logout_or_inactive":true,"existing_desktop_clients_disconnected":true,"ssh_connections_changed":false});
         if let Some(provider) = &provider {
             provider.recheck()?;
             plan["provider"] = provider.proof();
@@ -304,20 +495,70 @@ impl Reviewed for Desktop {
         Ok(value!({"plan_sha256":json::fingerprint(&plan)?,"plan":plan}))
     }
     fn review_stop(&mut self, peer: &Peer) -> Result<Value> {
-        let plan = value!({"schema":1,"uid":peer.uid,"previous_state_sha256":json::fingerprint(&self.snapshot(peer.uid)?)?,"desktop_clients_disconnected":true,"ssh_connections_changed":false,"autostart":false});
+        let unattended = Store::installed(peer.uid)?.load()?.is_some();
+        let plan = value!({"schema":1,"uid":peer.uid,"previous_state_sha256":json::fingerprint(&self.snapshot(peer.uid)?)?,"desktop_clients_disconnected":true,"ssh_connections_changed":false,"autostart":false,"unattended_turned_off":unattended});
+        Ok(value!({"plan_sha256":json::fingerprint(&plan)?,"plan":plan}))
+    }
+    fn review_unattended(&mut self, peer: &Peer, enabled: bool) -> Result<Value> {
+        require(peer.kind == "wayland", "desktop-wayland-session-required")?;
+        let uid = desktop_grant::account(peer.uid)?;
+        let previous = json::fingerprint(&self.snapshot(uid)?)?;
+        if !enabled {
+            let plan = value!({"schema":1,"uid":uid,"unattended":false,"previous_state_sha256":previous,"sharing_now_unchanged":true});
+            return Ok(value!({"plan_sha256":json::fingerprint(&plan)?,"plan":plan}));
+        }
+        let grant = self
+            .current(uid)?
+            .ok_or_else(|| Error("desktop-unattended-requires-sharing".into()))?;
+        require(
+            !crate::desktop_rdp::selected(&grant["configuration"]),
+            "desktop-unattended-provider-unavailable",
+        )?;
+        require(
+            grant["session"]["id"] == peer.id.as_str() && self.listening(uid, Some(&grant))?,
+            "desktop-unattended-requires-sharing",
+        )?;
+        let configuration = &grant["configuration"];
+        let address: IpAddr = configuration["listen_address"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| Error("desktop-grant-invalid".into()))?;
+        let network = self.reviewed_network(address)?;
+        let row = &network[0];
+        require(
+            row["interface"] == grant["interface"]
+                && row["zone"] == grant["zone"]
+                && grant
+                    .get("connection")
+                    .is_none_or(|reviewed| *reviewed == row["connection"]),
+            "desktop-approved-network-changed",
+        )?;
+        desktop_unattended::record(uid, configuration, &network)?;
+        let plan = value!({"schema":1,"uid":uid,"unattended":true,"configuration":configuration,"network":network,"previous_state_sha256":previous,"starts_after_sign_in":true,"starts_before_sign_in":false,"ends_on_lock_logout_or_inactive":true,"resumes_after_unlock":true,"stops_off_reviewed_network":true,"credentials_unchanged":true});
         Ok(value!({"plan_sha256":json::fingerprint(&plan)?,"plan":plan}))
     }
     fn change(
         &mut self,
         peer: &Peer,
         reviewed: &Value,
-        stopping: bool,
+        operation: Operation,
         before_commit: &mut dyn FnMut(&mut Self, bool) -> Result<()>,
     ) -> Result<Value> {
         let uid = desktop_grant::account(peer.uid)?;
         let directory = desktop_grant::folder(uid)?;
         files::ensure_directory(&directory, 0o700, 0)?;
-        let _lock = files::Lock::acquire(&directory.join("operation.lock"), 0)?;
+        let _lock = operation_lock(&directory)?;
+        if operation == Operation::Unattended {
+            before_commit(self, true)?;
+            let plan = &reviewed["plan"];
+            let enabled = plan["unattended"] == true;
+            let record = enabled
+                .then(|| desktop_unattended::record(uid, &plan["configuration"], &plan["network"]))
+                .transpose()?;
+            self.set_unattended(uid, record.as_ref())?;
+            return Ok(value!({"schema":1,"unattended":enabled}));
+        }
+        let stopping = operation == Operation::Stop;
         require(
             stopping || !self.unfinished(uid)?,
             "desktop-prior-operation-needs-reviewed-stop",
@@ -328,6 +569,9 @@ impl Reviewed for Desktop {
         let change: Result<Value> = (|| {
             before_commit(self, true)?;
             touched = true;
+            if stopping && reviewed["plan"]["unattended_turned_off"] == true {
+                self.set_unattended(uid, None)?;
+            }
             self.runtime.block_on(self.system(uid)?.job("stop"))?;
             self.release(uid)?;
             if stopping {
@@ -340,7 +584,7 @@ impl Reviewed for Desktop {
             self.runtime
                 .block_on(self.session.verify(&plan["session"]))?;
             let addresses = network::interfaces()?;
-            let mut grant = value!({"schema":1,"boot_id":ssh_provider::boot_id()?,"uid":uid,"nonce":files::random_hex(32)?,"session":plan["session"],"configuration":plan["configuration"],"interface":plan["interface"],"zone":plan["zone"]});
+            let mut grant = value!({"schema":1,"boot_id":ssh_provider::boot_id()?,"uid":uid,"nonce":files::random_hex(32)?,"session":plan["session"],"configuration":plan["configuration"],"interface":plan["interface"],"zone":plan["zone"],"connection":plan["connection"]});
             if crate::desktop_rdp::selected(&plan["configuration"]) {
                 crate::desktop_rdp::Installed::observe()?.matches(&plan["provider"])?;
                 grant["provider"] = plan["provider"].clone();
@@ -359,8 +603,24 @@ impl Reviewed for Desktop {
             before_commit(self, false)?;
             self.runtime
                 .block_on(self.session.verify(&plan["session"]))?;
+            if plan["autostart"] == true {
+                let network = value!([network::identity(
+                    grant["configuration"]["listen_address"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok())
+                        .ok_or_else(|| Error("desktop-grant-invalid".into()))?,
+                    grant["interface"].as_str().unwrap_or_default(),
+                    grant["zone"].as_str(),
+                    grant["connection"].as_str(),
+                )]);
+                Store::installed(uid)?.write(&desktop_unattended::record(
+                    uid,
+                    &grant["configuration"],
+                    &network,
+                )?)?;
+            }
             Ok(
-                value!({"schema":1,"listening":true,"configuration":grant["configuration"],"autostart":false,"ends_on_lock_logout_or_inactive":true}),
+                value!({"schema":1,"listening":true,"configuration":grant["configuration"],"autostart":plan["autostart"],"ends_on_lock_logout_or_inactive":true}),
             )
         })();
         match change {

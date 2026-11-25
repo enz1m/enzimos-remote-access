@@ -9,11 +9,32 @@ pub struct Command {
     pub name: String,
     pub configuration: Option<PathBuf>,
     pub interaction: bool,
+    /// The requested state for unattended desktop sharing commands.
+    pub unattended: Option<bool>,
 }
-pub const HELP: &str = "enzimos-remote capabilities|query|query-desktop|review-disconnect|disconnect|review-stop-desktop|stop-desktop|review FILE|apply FILE|review-desktop FILE|apply-desktop FILE [--allow-interaction]\n";
+pub const HELP: &str = "enzimos-remote capabilities|query|query-desktop|review-disconnect|disconnect|review-stop-desktop|stop-desktop|review FILE|apply FILE|review-desktop FILE|apply-desktop FILE|review-unattended-desktop on|off|set-unattended-desktop on|off [--allow-interaction]\n";
 pub fn parse(args: &[String]) -> Result<Command> {
     require(!args.is_empty(), "invalid-local-command")?;
     let name = args[0].as_str();
+    if matches!(name, "review-unattended-desktop" | "set-unattended-desktop") {
+        let mutation = name == "set-unattended-desktop";
+        let unattended = match args.get(1).map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return Err(Error("invalid-local-command".into())),
+        };
+        let interaction = match &args[2..] {
+            [] => false,
+            [flag] if mutation && flag == "--allow-interaction" => true,
+            _ => return Err(Error("invalid-local-command".into())),
+        };
+        return Ok(Command {
+            name: name.into(),
+            configuration: None,
+            interaction,
+            unattended: Some(unattended),
+        });
+    }
     require(
         matches!(
             name,
@@ -61,6 +82,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
         name: name.into(),
         configuration,
         interaction,
+        unattended: None,
     })
 }
 async fn call(connection: &Connection, member: &str, body: Option<Value>) -> Result<Value> {
@@ -164,6 +186,21 @@ pub async fn execute(command: Command) -> Result<Value> {
                 return Ok(reviewed);
             }
             call(&bus, if desktop { "StopDesktop" } else { "Disconnect" }, Some(value!({"schema":1,"plan_sha256":reviewed["plan_sha256"],"allow_interaction":command.interaction,"valid_for_ms":150000}))).await
+        }
+        "review-unattended-desktop" | "set-unattended-desktop" => {
+            let unattended = command
+                .unattended
+                .ok_or_else(|| Error("invalid-local-command".into()))?;
+            let reviewed = call(
+                &bus,
+                "ReviewDesktopUnattended",
+                Some(value!({"schema":1,"unattended":unattended})),
+            )
+            .await?;
+            if command.name.starts_with("review-") {
+                return Ok(reviewed);
+            }
+            call(&bus, "SetDesktopUnattended", Some(value!({"schema":1,"unattended":unattended,"plan_sha256":reviewed["plan_sha256"],"allow_interaction":command.interaction,"valid_for_ms":150000}))).await
         }
         "review" | "apply" | "review-desktop" | "apply-desktop" => {
             let configuration =

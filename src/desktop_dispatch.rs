@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Fresh sender-bound desktop authority and review survive blocking-job cancellation.
 use crate::slots::{Permit, Slots};
-use crate::{desktop_provider::Reviewed, dispatch};
+use crate::{
+    desktop_provider::{Operation, Reviewed},
+    dispatch,
+};
 use enzimos_platform::{Error, Result, require};
 use enzimos_system_backend::authority::{Authority, Peer};
 use serde_json::Value;
@@ -17,6 +20,30 @@ fn graphical(peer: &Peer) -> Result<()> {
         matches!(peer.kind.as_str(), "wayland" | "x11"),
         "active-local-graphical-session-required",
     )
+}
+fn request_fields(operation: Operation) -> &'static str {
+    match operation {
+        Operation::Apply => "configuration",
+        Operation::Stop => "",
+        Operation::Unattended => "unattended",
+    }
+}
+fn review<P: Reviewed>(
+    provider: &mut P,
+    peer: &Peer,
+    operation: Operation,
+    request: &Value,
+) -> Result<Value> {
+    match operation {
+        Operation::Apply => provider.review(peer, &request["configuration"]),
+        Operation::Stop => provider.review_stop(peer),
+        Operation::Unattended => provider.review_unattended(
+            peer,
+            request["unattended"]
+                .as_bool()
+                .ok_or_else(|| Error("request-fields".into()))?,
+        ),
+    }
 }
 struct Alive(Arc<AtomicBool>);
 impl Drop for Alive {
@@ -66,10 +93,13 @@ impl<P: Reviewed> Dispatcher<P> {
         &self,
         body: &str,
         sender: &str,
-        stopping: bool,
+        operation: Operation,
         permit: Permit,
     ) -> Result<(Value, Peer, Permit)> {
-        let request = dispatch::decode(body, if stopping { "" } else { "configuration" })?;
+        let request = dispatch::decode(body, request_fields(operation))?;
+        if operation == Operation::Unattended {
+            require(request["unattended"].is_boolean(), "request-fields")?;
+        }
         let peer = self.authority.peer(sender).await?;
         graphical(&peer)?;
         let authority = self.authority.clone();
@@ -84,35 +114,40 @@ impl<P: Reviewed> Dispatcher<P> {
                 runtime.block_on(authority.peer(&sender))? == peer,
                 "caller-session-changed",
             )?;
-            let review = if stopping {
-                provider.review_stop(&peer)
-            } else {
-                provider.review(&peer, &request["configuration"])
-            }?;
+            let review = review(&mut *provider, &peer, operation, &request)?;
             Ok((review, peer, permit))
         })
         .await
         .map_err(|_| Error("remote-provider-unavailable".into()))?
     }
-    pub async fn review(&self, body: &str, sender: &str, stopping: bool) -> Result<Value> {
+    pub async fn review(&self, body: &str, sender: &str, operation: Operation) -> Result<Value> {
         let (review, _, _permit) = self
-            .reviewed(body, sender, stopping, self.permit()?)
+            .reviewed(body, sender, operation, self.permit()?)
             .await?;
         Ok(review)
     }
-    pub async fn mutate(&self, body: &str, sender: &str, stopping: bool) -> Result<Value> {
+    pub async fn mutate(&self, body: &str, sender: &str, operation: Operation) -> Result<Value> {
         let arrived = Instant::now();
         let permit = self.permit()?;
-        let request = dispatch::mutation_request(body, !stopping)?;
-        let review_body = if stopping {
-            "{\"schema\":1}".to_owned()
-        } else {
-            serde_json::to_string(
-                &serde_json::json!({"schema":1,"configuration":request["configuration"]}),
-            )?
-        };
+        let request = dispatch::reviewed_mutation(
+            body,
+            match operation {
+                Operation::Apply => Some("configuration"),
+                Operation::Stop => None,
+                Operation::Unattended => Some("unattended"),
+            },
+        )?;
+        let review_body = serde_json::to_string(&match operation {
+            Operation::Stop => serde_json::json!({"schema":1}),
+            Operation::Apply => {
+                serde_json::json!({"schema":1,"configuration":request["configuration"]})
+            }
+            Operation::Unattended => {
+                serde_json::json!({"schema":1,"unattended":request["unattended"]})
+            }
+        })?;
         let (reviewed, peer, permit) = self
-            .reviewed(&review_body, sender, stopping, permit)
+            .reviewed(&review_body, sender, operation, permit)
             .await?;
         require(
             reviewed["plan_sha256"] == request["plan_sha256"],
@@ -143,17 +178,13 @@ impl<P: Reviewed> Dispatcher<P> {
                 require(active.load(Ordering::Acquire), "request-cancelled")?;
                 runtime.block_on(authority.recheck(&grant))?;
                 if check_review {
-                    let actual = if stopping {
-                        provider.review_stop(&peer)
-                    } else {
-                        provider.review(&peer, &request["configuration"])
-                    }?;
+                    let actual = review(provider, &peer, operation, &request)?;
                     require(actual == reviewed, "review-stale")?;
                 }
                 Ok(())
             };
             before_commit(&mut *provider, true)?;
-            provider.change(&peer, &reviewed, stopping, &mut before_commit)
+            provider.change(&peer, &reviewed, operation, &mut before_commit)
         })
         .await
         .map_err(|_| Error("remote-provider-unavailable".into()))?

@@ -69,32 +69,6 @@ fn approved_port(configuration: &Value) -> Result<u16> {
         .filter(|n| *n >= 22)
         .ok_or_else(|| Error("ssh-approved-port-invalid".into()))
 }
-// Without a running firewalld (`None`) the observed rows carry no zone.
-async fn observe_network(
-    bus: &Connection,
-    firewall: Option<&Firewall>,
-    interfaces: &BTreeMap<IpAddr, String>,
-    addresses: &[IpAddr],
-) -> Result<Value> {
-    let mut rows = Vec::new();
-    for address in addresses {
-        let interface = interfaces
-            .get(address)
-            .ok_or_else(|| Error("listen-address-unavailable".into()))?;
-        let zone = match firewall {
-            Some(firewall) => Some(firewall.zone_for(interface).await?),
-            None => None,
-        };
-        let connection = network::connection(bus, interface).await?;
-        rows.push(network::identity(
-            *address,
-            interface,
-            zone.as_deref(),
-            connection.as_deref(),
-        ));
-    }
-    Ok(Value::Array(rows))
-}
 enum Readiness {
     Ready {
         interfaces: BTreeMap<IpAddr, String>,
@@ -114,7 +88,7 @@ async fn approved_network(
         return Ok(Readiness::Waiting("listen-address-unavailable"));
     }
     let firewall_running = firewall.running().await?;
-    let observed = observe_network(
+    let observed = network::observe(
         bus,
         firewall_running.then_some(firewall),
         &interfaces,
@@ -255,7 +229,7 @@ impl ReviewedProvider for Ssh {
         if enabled {
             // Apply stops the running listener before acquiring the new lease.
             firewall::lease_rules(&configuration)?;
-            identity = self.runtime.block_on(observe_network(
+            identity = self.runtime.block_on(network::observe(
                 &self.bus,
                 Some(&self.firewall),
                 &addresses,

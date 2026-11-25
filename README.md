@@ -35,8 +35,10 @@ For desktop sharing, use `review-desktop FILE` and
 `apply-desktop FILE --allow-interaction`. WayVNC runs as the desktop owner and
 uses a separate sharing password and TLS certificate. You can grant view-only
 access or allow input. Sharing ends when the session locks, becomes inactive or
-logs out. Its firewall allowance follows firewalld reloads, stops and restarts
-in the same way as SSH. To stop it yourself, use `review-stop-desktop` and
+logs out. With `set-unattended-desktop on --allow-interaction`, approved while
+sharing runs, it starts again by itself after sign-in or unlock on the reviewed
+network; it never runs before sign-in. Its firewall allowance follows firewalld
+reloads, stops and restarts in the same way as SSH. To stop it yourself, use `review-stop-desktop` and
 `stop-desktop --allow-interaction`. This closes desktop connections and leaves
 SSH sessions running.
 
