@@ -18,7 +18,11 @@ use std::{
     path::{Path, PathBuf},
 };
 /// Installed compositor executable.
-pub const COMPOSITOR: &str = "/usr/lib/enzui/compositor/hyprland-current-build/Hyprland";
+pub const COMPOSITOR: &str = "/usr/lib/enzui/compositor/hyprland-current-build/enz-hyprland";
+const COMPOSITORS: [&str; 2] = [
+    COMPOSITOR,
+    "/usr/lib/enzui/compositor/hyprland-current-build/Hyprland",
+];
 /// Metadata of the installed file `path`, requiring Root-owned unwritable ancestors.
 ///
 /// # Errors
@@ -126,7 +130,7 @@ pub fn process(
     desktop_grant::account(uid)?;
     require(pid > 0 && pid < 1 << 31, "desktop-process-identity")?;
     let stat = process_identity::parse_stat(&kernel(pid, uid, "stat", 8192)?, pid)?;
-    let retained = Retained::open(pid, stat.start_ticks, uid, &[PathBuf::from(COMPOSITOR)])?;
+    let retained = Retained::open(pid, stat.start_ticks, uid, &COMPOSITORS.map(PathBuf::from))?;
     require(
         namespace(pid, uid)? == initial_namespace,
         "desktop-compositor-namespace",
@@ -333,7 +337,7 @@ pub fn verify(bound: &Value) -> Result<Retained> {
             .as_u64()
             .ok_or_else(|| enzimos_platform::Error("unexpected JSON value type".into()))?,
         uid,
-        &[PathBuf::from(COMPOSITOR)],
+        &COMPOSITORS.map(PathBuf::from),
     )?;
     require(
         process(
