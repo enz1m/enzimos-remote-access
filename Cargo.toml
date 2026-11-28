@@ -7,8 +7,8 @@ license = "MIT"
 publish = false
 
 [dependencies]
-enzimos-platform = { git = "https://github.com/enz1m/enzimos-packages.git", rev = "cfe4292cf83f8987f757c4f411a646e64722003a" }
-enzimos-system-backend = { git = "https://github.com/enz1m/enzimos-packages.git", rev = "cfe4292cf83f8987f757c4f411a646e64722003a", default-features = false }
+enzimos-platform = { git = "https://github.com/enz1m/enzimos-packages.git", rev = "bfbc46409befb5bbd67e766a1175f6b0a94774d7" }
+enzimos-system-backend = { git = "https://github.com/enz1m/enzimos-packages.git", rev = "bfbc46409befb5bbd67e766a1175f6b0a94774d7", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "process", "io-util"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
